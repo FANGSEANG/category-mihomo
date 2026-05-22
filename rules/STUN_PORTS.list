@@ -4,14 +4,3 @@
 DST-PORT,3478
 DST-PORT,5349
 
-# STUN相关域名
-DOMAIN,stun.isp.net.au
-DOMAIN,fwa.lifesizecloud.com
-DOMAIN,stun.freeswitch.org
-DOMAIN,stun.voip.blackberry.com
-DOMAIN,stun.nextcloud.com
-DOMAIN,stun.radiojar.com
-DOMAIN,stun.sonetel.com
-DOMAIN,stun.syncthing.net
-DOMAIN,stun.hot-chilli.net
-DOMAIN,stun.fitauto.ru
