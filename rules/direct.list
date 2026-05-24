@@ -455,7 +455,7 @@ DOMAIN,ncbi.nlm.nih.gov
 DOMAIN-SUFFIX,crossref.org
 
 # PikPak download CDN（直连）
-- DOMAIN-REGEX,^dl-[A-Za-z0-9-]+\.mypikpak\.com$
+DOMAIN-REGEX,^dl-[A-Za-z0-9-]+\.mypikpak\.com$
 
 # 其他分类
 DOMAIN-SUFFIX,cn.bing.com
