@@ -1,2 +1,2 @@
-# openclash
-somethings about openclash
+# category-mihomo
+somethings about category-mihomo
