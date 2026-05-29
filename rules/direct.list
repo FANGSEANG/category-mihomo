@@ -24,6 +24,7 @@ DST-PORT,7844
 # GitHub 反代 CDN
 DOMAIN-SUFFIX,gh-proxy.com
 DOMAIN-SUFFIX,gh.con.sh
+DOMAIN-SUFFIX,gh-proxy.org
 DOMAIN-SUFFIX,gh.ddlc.top
 DOMAIN-SUFFIX,gh.llkk.cc
 DOMAIN-SUFFIX,ghfast.top
@@ -41,6 +42,7 @@ DOMAIN-SUFFIX,hub.gitmirror.com
 DOMAIN-SUFFIX,jsdelivr.com
 DOMAIN-SUFFIX,jsdelivr.net
 DOMAIN-SUFFIX,kgithub.com
+
 
 # Docker 反代 CDN
 DOMAIN-SUFFIX,docker.1panel.live
@@ -205,7 +207,6 @@ DOMAIN-SUFFIX,easytier.top
 # 下载类
 DOMAIN,router.bittorrent.com # tracker
 DOMAIN-KEYWORD,tracker # tracker
-DOMAIN,v6.gh-proxy.org # GitHub等国外站点的下载加速服务，直连可以获得更快的下载速度
 
 # 馒头
 DOMAIN-KEYWORD,m-team
@@ -414,10 +415,6 @@ IP-CIDR,fc00::/7,no-resolve
 IP-CIDR,fe80::/10,no-resolve
 
 # ====== 国内测速直连 ======
-DOMAIN-SUFFIX,speedtest.net
-DOMAIN-SUFFIX,ookla.com
-DOMAIN-SUFFIX,fast.com
-
 DOMAIN-SUFFIX,huaban.com
 DOMAIN-SUFFIX,huaban-speedtest.com
 
