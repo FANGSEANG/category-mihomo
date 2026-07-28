@@ -16,7 +16,7 @@ Function: CPU Detect Arch: Multi-Arch
   - x86_64、aarch64、armv7 等架构
   - 缺少 curl 时给出对应安装命令
 
-**使用命令：**
+**使用命令更新geoX数据库并重启Nikki：**
 
 ```bash
 wget -qO- https://raw.githubusercontent.com/FANGSEANG/category-mihomo/refs/heads/main/shell/update-nikki-geox.sh | sh
