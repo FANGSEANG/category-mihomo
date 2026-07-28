@@ -20,9 +20,9 @@ DOMAIN-SUFFIX,tailscale.com
 IP-CIDR,100.64.0.0/10,no-resolve
 IP-CIDR,fd7a:115c:a1e0::/48,no-resolve
 
-# 常用端口
-DST-PORT,41641
-SRC-PORT,41641
+# 常用端口（仅UDP）
+AND,((NETWORK,UDP),(DST-PORT,41641))
+AND,((NETWORK,UDP),(SRC-PORT,41641))
 
 # peer relays端口
 DST-PORT,40000
@@ -33,21 +33,26 @@ SRC-PORT,40000
 #-------------------------
 
 # Domain
-DOMAIN-SUFFIX,cdn77.com
+#DOMAIN-SUFFIX,cdn77.com
 DOMAIN,planet.zerotier.com
 
-# 端口
-DST-PORT,9993
-SRC-PORT,9993
+# 端口（仅UDP）
+AND,((NETWORK,UDP),(DST-PORT,9993))
+AND,((NETWORK,UDP),(SRC-PORT,9993))
 
 #-------------------------
 # Cloudflare Tunnel
 #-------------------------
+#DOMAIN-SUFFIX,argotunnel.com
+#DOMAIN-SUFFIX,cftunnel.com
+#IP-CIDR,198.41.192.0/24,no-resolve
+#IP-CIDR,198.41.200.0/24,no-resolve
+#DST-PORT,7844
+#最新写法
 DOMAIN-SUFFIX,argotunnel.com
 DOMAIN-SUFFIX,cftunnel.com
-IP-CIDR,198.41.192.0/24,no-resolve
-IP-CIDR,198.41.200.0/24,no-resolve
-DST-PORT,7844
+AND,((IP-CIDR,198.41.192.0/24),(DST-PORT,7844))
+AND,((IP-CIDR,198.41.200.0/24),(DST-PORT,7844))
 
 #-------------------------
 # 适合直连的Stun 域名
