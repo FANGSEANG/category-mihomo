@@ -3,18 +3,18 @@
 Function: CPU Detect Arch: Multi-Arch
 
 相关说明：
-1、更新 GeoSite.dat、GeoIP.dat、Country.mmdb、ASN.mmdb
-2、默认安装到 /etc/nikki/run
-3、下载失败或文件校验失败时不覆盖旧数据库
-4、原子替换并自动重启 Nikki
-5、Nikki 重启失败时自动恢复旧数据库
-6、兼容 OpenWrt BusyBox ash
-7、数据源采用 MetaCubeX/meta-rules-dat，文件名及目录符合 Nikki/Mihomo 的使用方式；Nikki 官方依赖中也包含 curl。Nikki 官方仓库
-8、自动识别并显示：
-OpenWrt 版本
-apk 或 opkg
-x86_64、aarch64、armv7 等架构
-缺少 curl 时给出对应安装命令
+- ✅ **更新 GeoSite.dat、GeoIP.dat、Country.mmdb、ASN.mmdb
+- ✅ **默认安装到 /etc/nikki/run
+- ✅ **下载失败或文件校验失败时不覆盖旧数据库
+- ✅ **原子替换并自动重启 Nikki
+- ✅ **Nikki 重启失败时自动恢复旧数据库
+- ✅ **兼容 OpenWrt BusyBox ash
+- ✅ **数据源采用 MetaCubeX/meta-rules-dat，文件名及目录符合 Nikki/Mihomo 的使用方式；Nikki 官方依赖中也包含 curl。Nikki 官方仓库
+- ✅ **自动识别并显示：
+- **OpenWrt 版本
+- **apk 或 opkg
+- **x86_64、aarch64、armv7 等架构
+- **缺少 curl 时给出对应安装命令
 
 **使用命令：**
 
