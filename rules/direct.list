@@ -206,7 +206,6 @@ DOMAIN-SUFFIX,easytier.top
 
 # 下载类
 DOMAIN,router.bittorrent.com # tracker
-DOMAIN-KEYWORD,tracker # tracker
 
 # 馒头
 DOMAIN-KEYWORD,m-team
@@ -405,7 +404,7 @@ IP-CIDR,0.0.0.0/8,no-resolve
 IP-CIDR,10.0.0.0/8,no-resolve
 IP-CIDR,100.64.0.0/10,no-resolve
 IP-CIDR,127.0.0.0/8,no-resolve
-IP-CIDR,17.0.0.0/8,no-resolve
+#IP-CIDR,17.0.0.0/8,no-resolve #会强制苹果推送直连，暂时注释掉
 IP-CIDR,172.16.0.0/12,no-resolve
 IP-CIDR,192.168.0.0/16,no-resolve
 IP-CIDR,198.18.0.0/16,no-resolve
@@ -426,15 +425,8 @@ DOMAIN-SUFFIX,ctyun.cn
 DOMAIN-SUFFIX,telecomtest.cn
 DOMAIN-SUFFIX,unicomtest.cn
 
-# 中国测速常用网段直连
-IP-CIDR,117.78.0.0/16,no-resolve
-IP-CIDR,183.194.0.0/16,no-resolve
-IP-CIDR,221.179.0.0/16,no-resolve
-IP-CIDR,202.97.0.0/16,no-resolve
-IP-CIDR,58.60.0.0/16,no-resolve
-
 # 苹果推送服务
-DST-PORT,5223
+#DST-PORT,5223 #会强制苹果推送直连，暂时注释掉
 
 # NTP时间校准服务
 DST-PORT,123
