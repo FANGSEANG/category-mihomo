@@ -1,6 +1,8 @@
 脚本说明和使用方法：
 脚本：update-nikki-geox.sh
-Function: CPU Detect Arch: Multi-Arch
+<p align="center"><b>✨ 首次运行Nikki, 方便、快捷的 Nikki一键更新geoX数据库 ✨</b></p>
+
+## 🔍 **update-nikki-geox.sh**
 
 相关说明：
 - ✅ 更新 GeoSite.dat、GeoIP.dat、Country.mmdb、ASN.mmdb
