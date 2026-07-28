@@ -16,8 +16,13 @@ apk 或 opkg
 x86_64、aarch64、armv7 等架构
 缺少 curl 时给出对应安装命令
 
-使用命令：
+**使用命令：**
+
+```bash
 wget -qO- https://raw.githubusercontent.com/FANGSEANG/category-mihomo/refs/heads/main/shell/update-nikki-geox.sh | sh
+```
 
 若只更新geoX数据、不重启nikki：
+```bash
 wget -qO- https://raw.githubusercontent.com/FANGSEANG/category-mihomo/refs/heads/main/shell/update-nikki-geox.sh | RESTART_NIKKI=0 sh
+```
