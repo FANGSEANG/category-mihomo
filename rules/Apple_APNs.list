@@ -1,0 +1,30 @@
+# Apple Push Notification service (APNs)
+# 用途：匹配 Apple 设备接收推送，以及服务端向 APNs 发送通知所需的官方域名和精确地址段。
+# 官方来源：
+# https://support.apple.com/102266
+# https://support.apple.com/101555
+# https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns
+# 更新时间：2026-07-29
+#
+# 说明：
+# 1. *.push.apple.com 覆盖设备连接及 api.push.apple.com、api.sandbox.push.apple.com 等 APNs 主机。
+# 2. 未使用 17.0.0.0/8，避免将整个 Apple IPv4 地址空间都归入 APNs。
+# 3. 未加入 akadns.net 与 apple.com.edgekey.net，避免误匹配大量 Akamai/CDN 流量。
+# 4. 未加入 identity.apple.com；它是 APNs 证书申请门户，不是普通设备推送传输端点。
+
+DOMAIN-SUFFIX,push.apple.com
+
+# DOMAIN,identity.apple.com # APNs 证书申请门户，并非普通设备接收推送的传输端点；仅在需要管理 APNs 证书时考虑启用
+# DOMAIN-SUFFIX,akadns.net # Akamai 公共 DNS 基础设施后缀，范围过大，启用后可能误匹配大量非 Apple 流量
+# DOMAIN-KEYWORD,apple.com.edgekey.net # Apple 的 Akamai CDN 映射域名，不是官方 APNs 必需项，且关键词匹配范围较宽
+
+IP-CIDR,17.188.20.0/23,no-resolve
+IP-CIDR,17.57.144.0/22,no-resolve
+IP-CIDR,17.188.128.0/18,no-resolve
+IP-CIDR,17.249.0.0/16,no-resolve
+IP-CIDR,17.252.0.0/16,no-resolve
+
+IP-CIDR6,2403:300:a42::/48,no-resolve
+IP-CIDR6,2403:300:a51::/48,no-resolve
+IP-CIDR6,2620:149:a44::/48,no-resolve
+IP-CIDR6,2a01:b740:a42::/48,no-resolve
