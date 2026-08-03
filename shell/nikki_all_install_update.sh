@@ -15,10 +15,10 @@
 #   NIKKI_DISABLE_LIVE_INPUT=1 禁用手动多选菜单逐键刷新，改用回车确认
 #
 # 非交互示例：
-#   sh nikki_all_install_update_v3.6.0.sh --action smart --lgbm auto --yes
-#   sh nikki_all_install_update_v3.6.0.sh --action alpha --yes
-#   sh nikki_all_install_update_v3.6.0.sh --action stable --yes
-#   sh nikki_all_install_update_v3.6.0.sh --action uninstall --yes
+#   sh nikki_all_install_update.sh --action smart --lgbm auto --yes
+#   sh nikki_all_install_update.sh --action alpha --yes
+#   sh nikki_all_install_update.sh --action stable --yes
+#   sh nikki_all_install_update.sh --action uninstall --yes
 
 set -u
 
