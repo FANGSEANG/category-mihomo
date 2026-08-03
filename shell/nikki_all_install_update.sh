@@ -1,6 +1,7 @@
 #!/bin/sh
 #
 # Nikki 全方位一键维护脚本
+# 项目地址: https://github.com/FANGSEANG/category-mihomo/tree/main/shell
 # 适用：OpenWrt/ImmortalWrt 等兼容固件，24.10 / 25.12 / 官方支持的 SNAPSHOT，BusyBox ash
 # 功能：安装/更新 Nikki、切换 Mihomo 内核、更新 LightGBM/GeoX/Zashboard/rule-set、卸载清理
 #
