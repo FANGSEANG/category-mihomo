@@ -1,7 +1,6 @@
 #!/bin/sh
 #
 # Nikki 全方位一键维护脚本
-# 项目地址: https://github.com/FANGSEANG/category-mihomo/tree/main/shell
 # 适用：OpenWrt/ImmortalWrt 等兼容固件，24.10 / 25.12 / 官方支持的 SNAPSHOT，BusyBox ash
 # 功能：安装/更新 Nikki、切换 Mihomo 内核、更新 LightGBM/GeoX/Zashboard/rule-set、卸载清理
 #
@@ -10,9 +9,11 @@
 #   DIRECT_MIN_KBPS=64       直连持续低于该速度后切换反代（curl）
 #   DIRECT_SLOW_TIME=15      直连或反代低速持续秒数
 #   DOWNLOAD_MAX_TIME=900    单个文件最长下载时间
+#   DOWNLOAD_ROUNDS=3        失败后从直连重新开始的轮数（固定最多三轮）
 #   MIPS_FLOAT=auto          MIPS 可覆盖为 softfloat 或 hardfloat
 #   KEEP_BACKUP_ON_SUCCESS=1 成功后保留事务备份（默认清理）
 #   NIKKI_DISABLE_LIVE_INPUT=1 禁用手动多选菜单逐键刷新，改用回车确认
+#   NIKKI_DETAIL=1            展开全部详细流程输出（默认只显示关键步骤）
 #
 # 非交互示例：
 #   sh nikki_all_install_update.sh --action smart --lgbm auto --yes
@@ -22,13 +23,16 @@
 
 set -u
 
-SCRIPT_VERSION="3.6.0"
+SCRIPT_VERSION="3.7.0"
 ACTION=""; CLI_ACTION=""; MAIN_CHOICE=""; WORKFLOW_MODE="命令行维护"
 ENVIRONMENT_READY=0; PKG_INDEX_READY=0; NIKKI_FEED_READY=0; NIKKI_FEED_ATTEMPTED=0; STATUS_SCAN_READY=0
+NIKKI_FEED_ORIGINAL_ANY=0; NIKKI_FEED_ADDED_SESSION=0; NIKKI_FEED_EXIT_PROMPTED=0
 NIKKI_UPDATE_CHOICE="update"; LGBM_CHOICE="auto"; LGBM_SET=0
 GEOX_CHOICE="update"; ZASH_CHOICE="update"; ZASH_ASSET="dist.zip"; ZASH_VARIANT_LABEL="full"
 RULESET_CHOICE="skip"; MODEL_MAINTAIN=0
 CORE_SWITCH_ONLY=0; COMPONENT_ONLY=0; COMPONENT_ONLY_KIND=""; ASSUME_YES=0
+DETAIL_OUTPUT="${NIKKI_DETAIL:-0}"
+DOWNLOAD_FAILURES=0
 KEEP_BACKUP_ON_SUCCESS="${KEEP_BACKUP_ON_SUCCESS:-0}"; MIPS_FLOAT="${MIPS_FLOAT:-auto}"
 DIRECT_MIN_KBPS="${DIRECT_MIN_KBPS:-64}"; DIRECT_SLOW_TIME="${DIRECT_SLOW_TIME:-15}"
 DOWNLOAD_MAX_TIME="${DOWNLOAD_MAX_TIME:-900}"; WGET_MAX_TIME="${WGET_MAX_TIME:-$DOWNLOAD_MAX_TIME}"; DOWNLOAD_ROUNDS="${DOWNLOAD_ROUNDS:-3}"
@@ -42,6 +46,8 @@ NIKKI_APK_KEY="/etc/apk/keys/nikki.pem"; NIKKI_DIR="/etc/nikki"; RUN_DIR="/etc/n
 MODEL_PATH="/etc/nikki/run/Model.bin"; UI_DIR="/etc/nikki/run/ui"; UI_NAME="zashboard"
 UI_TARGET="${UI_DIR}/${UI_NAME}"
 STATE_FILE="/etc/nikki/.all-update-state"
+# 独立于 /etc/nikki，卸载 Nikki 后仍可恢复插件设置。
+SETTINGS_BACKUP_DIR="${NIKKI_BACKUP_DIR:-/etc/nikki-backups}"
 
 PID="$$"; WORK_DIR="/tmp/nikki-all-update.${PID}"; LOCK_DIR="/tmp/nikki-all-update.lock"; LOCKED=0
 TRANSACTION_ACTIVE=0; WAS_RUNNING=0; MAINT_SUCCESS=0
@@ -62,7 +68,8 @@ CORE_EXISTED=0; MODEL_EXISTED=0; UI_EXISTED=0; CONFIG_EXISTED=0; SUBSCRIPTIONS_E
 R='\033[31m'; G='\033[32m'; Y='\033[33m'; M='\033[35m'; C='\033[36m'; B='\033[1m'; N='\033[0m'; ALERT='\033[1;97;41m'
 
 say()  { printf '%b\n' "$*"; }
-info() { say "${C}[信息]${N} $*"; }
+info() { [ "$DETAIL_OUTPUT" = "1" ] || return 0; say "${C}[详细]${N} $*"; }
+key_info() { say "${C}[信息]${N} $*"; }
 ok()   { say "${G}[完成]${N} $*"; }
 warn() { say "${Y}[警告]${N} $*" >&2; }
 err()  { say "${R}[错误]${N} $*" >&2; }
@@ -70,7 +77,14 @@ menu_line() { say "${B}${C}$*${N}"; }
 prompt() { printf '%b' "${B}${Y}$*${N}"; }
 danger_prompt() { printf '%b' "${B}${R}$*${N}"; }
 flow_title() { say ""; say "${B}${M}================ $* ================${N}"; }
-progress_line() { say "${B}${C}  ├─ [进度 $1]${N} $2"; }
+progress_line() {
+	pl_fraction="${1%% *}"; pl_num="${pl_fraction%%/*}"; pl_den="${pl_fraction#*/}"; pl_pct=""
+	case "$pl_num" in ''|*[!0-9]*) ;; *)
+		case "$pl_den" in ''|*[!0-9]*|0) ;; *) pl_pct=" $((pl_num * 100 / pl_den))%" ;; esac
+		;;
+	esac
+	say "${B}${C}  ├─ [进度 ${1}${pl_pct}]${N} $2"
+}
 progress_done() { say "${B}${G}  └─ [完成]${N} $*"; }
 progress_skip() { say "${B}${Y}  └─ [跳过]${N} $*"; }
 paint_current() { printf '%b' "${B}${C}$*${N}"; }
@@ -91,6 +105,52 @@ fatal() {
 	exit 1
 }
 
+session_feed_cleanup() {
+	[ "$NIKKI_FEED_EXIT_PROMPTED" -eq 0 ] || return 0
+	NIKKI_FEED_EXIT_PROMPTED=1
+	[ "$NIKKI_FEED_ADDED_SESSION" -eq 1 ] || return 0
+	[ "$NIKKI_FEED_ORIGINAL_ANY" -eq 0 ] || return 0
+	if [ "$ASSUME_YES" -eq 1 ] || [ ! -c /dev/tty ]; then
+		key_info "本次会话新添加的 Nikki 软件源将保留（非交互模式）"
+		return 0
+	fi
+	say ""
+	say "${B}${Y}本次会话新添加了 Nikki 官方软件源。退出前是否保留？${N}"
+	say "  ${G}YES / y / 是${N}）保留软件源，方便下次直接安装"
+	say "  ${R}NO / n / 否${N}）删除软件源及签名密钥"
+	while :; do
+		prompt '>>> 请选择 [YES/NO]：'
+		IFS= read -r sf_answer </dev/tty || return 0
+		sf_answer="$(normalize_menu_answer "$sf_answer")"
+		case "$sf_answer" in
+			YES|yes|Yes|Y|y|是) key_info "已选择保留 Nikki 官方软件源和签名密钥"; return 0 ;;
+			NO|no|No|N|n|否)
+				sf_file="$(feed_source_file 2>/dev/null || true)"
+				if [ -n "$sf_file" ] && [ -f "$sf_file" ]; then
+					case "$PKG_MANAGER" in
+						opkg) sed -i '/^[[:space:]]*src\/gz[[:space:]][[:space:]]*nikki[[:space:]]/d' "$sf_file" 2>/dev/null || true ;;
+						apk) sed -i '/\/nikki\/packages\.adb[[:space:]]*$/d' "$sf_file" 2>/dev/null || true ;;
+					esac
+				fi
+				if [ "$PKG_MANAGER" = apk ]; then
+					rm -f -- "$NIKKI_APK_KEY" 2>/dev/null || true
+				else
+					sf_tmp="/tmp/nikki-feed-exit.${PID}"; mkdir -p "$sf_tmp" 2>/dev/null || true
+					if fetch_once 'https://nikkinikki.pages.dev/key-build.pub' "$sf_tmp/key-build.pub" && command -v opkg-key >/dev/null 2>&1; then
+						opkg-key remove "$sf_tmp/key-build.pub" >/dev/null 2>&1 || true
+					else
+						warn "软件源已删除，但 OPKG 签名密钥未能自动移除，请手动清理"
+					fi
+					rm -rf -- "$sf_tmp" 2>/dev/null || true
+				fi
+				key_info "已删除本次会话新增的 Nikki 软件源及签名密钥"
+				return 0
+				;;
+			*) warn "请输入 YES 保留或 NO 删除" ;;
+		esac
+	done
+}
+
 safe_rm_tree() {
 	srt_path="$1"
 	case "$srt_path" in
@@ -107,6 +167,7 @@ safe_rm_tree() {
 # 由 EXIT trap 间接调用。
 # shellcheck disable=SC2329
 cleanup() {
+	session_feed_cleanup
 	restore_tty
 	if [ "$TRANSACTION_ACTIVE" -eq 0 ]; then
 		[ ! -d "$WORK_DIR" ] || safe_rm_tree "$WORK_DIR" >/dev/null 2>&1 || true
@@ -132,8 +193,10 @@ usage() {
 	say "用法：${0##*/} [选项]"
 	cat <<'EOF'
   --action smart|alpha|stable|uninstall
-  --lgbm auto|small|middle|large
+  --lgbm auto|small|middle|large|skip
   --yes                 非交互确认
+  --verbose             展开详细流程输出（默认仅关键步骤）
+  --quiet               仅输出警告、错误和完成结果
   -h, --help            显示帮助
 EOF
 }
@@ -148,19 +211,21 @@ parse_args() {
 				[ "$#" -ge 2 ] || fatal "--lgbm 缺少参数"
 				LGBM_CHOICE="$2"; LGBM_SET=1; shift 2 ;;
 			--yes|-y) ASSUME_YES=1; shift ;;
+			--verbose|--detail) DETAIL_OUTPUT=1; shift ;;
+			--quiet) DETAIL_OUTPUT=0; shift ;;
 			-h|--help) usage; exit 0 ;;
 			*) fatal "未知参数：$1" ;;
 		esac
 	done
 	case "$ACTION" in ""|smart|alpha|stable|uninstall) ;; *) fatal "无效 action：$ACTION" ;; esac
-	case "$LGBM_CHOICE" in auto|small|middle|large) ;; *) fatal "无效 LGBM 版本：$LGBM_CHOICE" ;; esac
+	case "$LGBM_CHOICE" in auto|small|middle|large|skip) ;; *) fatal "无效 LGBM 版本：$LGBM_CHOICE" ;; esac
 	case "$DIRECT_MIN_KBPS:$DIRECT_SLOW_TIME:$DOWNLOAD_MAX_TIME:$WGET_MAX_TIME" in
 		*[!0-9:]*|:*|*::*|*:) fatal "下载速度和超时参数必须为正整数" ;;
 	esac
 	[ "$DIRECT_MIN_KBPS" -gt 0 ] && [ "$DIRECT_SLOW_TIME" -gt 0 ] && [ "$DOWNLOAD_MAX_TIME" -gt 0 ] && [ "$WGET_MAX_TIME" -gt 0 ] ||
 		fatal "下载速度和超时参数必须大于 0"
 	[ "$WGET_MAX_TIME" -ge "$DIRECT_SLOW_TIME" ] || fatal "WGET_MAX_TIME 不能小于 DIRECT_SLOW_TIME"
-	case "$DOWNLOAD_ROUNDS" in 3|4|5) ;; *) fatal "DOWNLOAD_ROUNDS 必须为 3、4 或 5" ;; esac
+	case "$DOWNLOAD_ROUNDS" in 3) ;; *) fatal "DOWNLOAD_ROUNDS 必须为 3（最多三轮）" ;; esac
 }
 
 acquire_lock() {
@@ -440,26 +505,34 @@ plausible_file() {
 	esac
 }
 
+fetch_method_retry() {
+	# 每个下载方式最多尝试三次；两次失败之间等待 2 秒，再切换下一个方式。
+	fmr_url="$1"; fmr_out="$2"; fmr_kind="$3"; fmr_label="$4"; fmr_try=1
+	while [ "$fmr_try" -le 3 ]; do
+		info "${fmr_label}尝试 ${fmr_try}/3：$fmr_url"
+		if fetch_once "$fmr_url" "$fmr_out" && plausible_file "$fmr_out" "$fmr_kind"; then return 0; fi
+		[ "$fmr_try" -lt 3 ] && sleep 2
+		fmr_try=$((fmr_try + 1))
+	done
+	return 1
+}
+
 fetch_url() {
 	fu_url="$1"; fu_out="$2"; fu_kind="${3:-file}"
 	fu_round=1
 	while [ "$fu_round" -le "$DOWNLOAD_ROUNDS" ]; do
-		info "下载轮次 ${fu_round}/${DOWNLOAD_ROUNDS}：先尝试直连"
-		info "尝试直连：$fu_url"
-		if fetch_once "$fu_url" "$fu_out" && plausible_file "$fu_out" "$fu_kind"; then
-			ok "直连下载成功：$(basename "$fu_out")"
-			return 0
+		key_info "下载轮次 ${fu_round}/${DOWNLOAD_ROUNDS}：直连优先，失败/低速后切换反代"
+		if fetch_method_retry "$fu_url" "$fu_out" "$fu_kind" "直连 "; then
+			ok "直连下载成功：$(basename "$fu_out")"; return 0
 		fi
-		warn "直连失败、超时、持续低速或内容异常，开始切换反代"
+		warn "直连连续 3 次失败、超时、持续低速或内容异常，开始轮换反代"
 		fu_list="$GITHUB_PROXIES"
 		for fu_proxy in $fu_list; do
 			fu_proxy_url="$(apply_proxy "$fu_proxy" "$fu_url")"
-			info "尝试反代：$fu_proxy"
-			if fetch_once "$fu_proxy_url" "$fu_out" && plausible_file "$fu_out" "$fu_kind"; then
-				ok "反代可用：$fu_proxy"
-				return 0
+			if fetch_method_retry "$fu_proxy_url" "$fu_out" "$fu_kind" "反代 ${fu_proxy} "; then
+				ok "反代下载成功：$fu_proxy"; return 0
 			fi
-			warn "反代不可用或下载内容异常：$fu_proxy"
+			warn "反代连续 3 次失败或内容异常，迅速切换下一个节点：$fu_proxy"
 		done
 		if [ "$fu_round" -lt "$DOWNLOAD_ROUNDS" ]; then
 			warn "本轮全部节点失败，2 秒后从直连开始下一轮"
@@ -468,7 +541,8 @@ fetch_url() {
 		fu_round=$((fu_round + 1))
 	done
 	rm -f -- "$fu_out"
-	err "直连及全部反代连续 ${DOWNLOAD_ROUNDS} 轮失败：$fu_url"
+	DOWNLOAD_FAILURES=$((DOWNLOAD_FAILURES + 1))
+	err "直连及全部反代连续 ${DOWNLOAD_ROUNDS} 轮失败：$fu_url，请稍后重试"
 	return 1
 }
 
@@ -486,7 +560,13 @@ pkg_is_installed() {
 	case "$PKG_MANAGER" in opkg) opkg list-installed "$pi_name" 2>/dev/null | grep -q "^${pi_name} " ;; apk) apk info -e "$pi_name" >/dev/null 2>&1 ;; *) return 1 ;; esac
 }
 
-pkg_update() { case "$PKG_MANAGER" in opkg) opkg update ;; apk) apk update ;; esac; }
+pkg_update() {
+	case "$PKG_MANAGER" in
+		opkg) if [ "$DETAIL_OUTPUT" = 1 ]; then opkg update; else opkg update >/dev/null 2>&1; fi ;;
+		apk) if [ "$DETAIL_OUTPUT" = 1 ]; then apk update; else apk update >/dev/null 2>&1; fi ;;
+		*) return 1 ;;
+	esac
+}
 pkg_update_once() {
 	if [ "$PKG_INDEX_READY" -eq 1 ]; then
 		info "复用本次脚本会话已刷新的软件包索引"
@@ -502,9 +582,23 @@ invalidate_package_session_cache() {
 reset_nikki_feed_session() {
 	invalidate_package_session_cache
 	NIKKI_FEED_ATTEMPTED=0
+	NIKKI_FEED_ORIGINAL_ANY=0
+	NIKKI_FEED_ADDED_SESSION=0
 }
-pkg_install() { case "$PKG_MANAGER" in opkg) opkg install "$@" ;; apk) apk add "$@" ;; esac; }
-pkg_remove() { case "$PKG_MANAGER" in opkg) opkg remove "$@" ;; apk) apk del "$@" ;; esac; }
+pkg_install() {
+	case "$PKG_MANAGER" in
+		opkg) if [ "$DETAIL_OUTPUT" = 1 ]; then opkg install "$@"; else opkg install "$@" >/dev/null 2>&1; fi ;;
+		apk) if [ "$DETAIL_OUTPUT" = 1 ]; then apk add "$@"; else apk add "$@" >/dev/null 2>&1; fi ;;
+		*) return 1 ;;
+	esac
+}
+pkg_remove() {
+	case "$PKG_MANAGER" in
+		opkg) if [ "$DETAIL_OUTPUT" = 1 ]; then opkg remove "$@"; else opkg remove "$@" >/dev/null 2>&1; fi ;;
+		apk) if [ "$DETAIL_OUTPUT" = 1 ]; then apk del "$@"; else apk del "$@" >/dev/null 2>&1; fi ;;
+		*) return 1 ;;
+	esac
+}
 
 nikki_version() {
 	case "$PKG_MANAGER" in
@@ -542,19 +636,13 @@ inspect_nikki_release_fallback() {
 inspect_nikki_update() {
 	NIKKI_AVAILABLE_VERSION=""
 	NIKKI_UPDATE_STATE="unknown"
-	if [ "$NIKKI_FEED_READY" -ne 1 ]; then
-		warn "本次会话添加 Nikki 软件源失败，将通过官方 Release 查询最新版本"
+	# 版本状态扫描不得触发 feed.sh；只有真正执行 Nikki 主体安装/更新时才处理软件源。
+	if [ "$NIKKI_FEED_READY" -eq 1 ] && feed_current; then
+		NIKKI_AVAILABLE_VERSION="$(nikki_upgrade_version)"
+		if [ -n "$NIKKI_AVAILABLE_VERSION" ]; then NIKKI_UPDATE_STATE="update"; else NIKKI_UPDATE_STATE="latest"; fi
+	else
 		inspect_nikki_release_fallback || warn "官方 Release 查询失败，暂时无法判断 Nikki 是否有更新"
-		return 0
 	fi
-	info "复用本次脚本启动时添加的软件源和已刷新索引，检查 Nikki 最新版本……"
-	if ! pkg_update_once; then
-		warn "软件源刷新失败，将改用官方 Release 查询；选择继续后安装流程仍会重试软件源"
-		inspect_nikki_release_fallback || warn "官方 Release 查询也失败，暂时无法判断 Nikki 是否有更新"
-		return 0
-	fi
-	NIKKI_AVAILABLE_VERSION="$(nikki_upgrade_version)"
-	if [ -n "$NIKKI_AVAILABLE_VERSION" ]; then NIKKI_UPDATE_STATE="update"; else NIKKI_UPDATE_STATE="latest"; fi
 }
 
 backup_install_state() {
@@ -620,38 +708,92 @@ restore_install_state() {
 	fi
 }
 
-feed_present() {
+feed_source_file() {
 	case "$PKG_MANAGER" in
-		opkg) grep -q '^[[:space:]]*src/gz[[:space:]][[:space:]]*nikki[[:space:]]' /etc/opkg/customfeeds.conf 2>/dev/null ;;
-		apk) grep -q '/nikki/packages\.adb[[:space:]]*$' /etc/apk/repositories.d/customfeeds.list 2>/dev/null ;;
+		opkg) printf '%s\n' /etc/opkg/customfeeds.conf ;;
+		apk) printf '%s\n' /etc/apk/repositories.d/customfeeds.list ;;
 		*) return 1 ;;
 	esac
 }
 
-add_nikki_feed_once() {
-	if [ "$NIKKI_FEED_ATTEMPTED" -eq 1 ]; then
-		if [ "$NIKKI_FEED_READY" -eq 1 ]; then
-			info "复用本次脚本会话已添加的 Nikki 软件源和软件包索引，不重复执行 feed.sh"
+feed_expected_line() {
+	ff_branch="$OFFICIAL_BRANCH"; ff_arch="$OPENWRT_ARCH"
+	[ -n "$ff_branch" ] && [ -n "$ff_arch" ] || return 1
+	ff_url="https://nikkinikki.pages.dev/${ff_branch}/${ff_arch}/nikki"
+	case "$PKG_MANAGER" in
+		opkg) printf 'src/gz nikki %s\n' "$ff_url" ;;
+		apk) printf '%s/packages.adb\n' "$ff_url" ;;
+		*) return 1 ;;
+	esac
+}
+
+feed_any() {
+	ff_file="$(feed_source_file 2>/dev/null || true)"
+	[ -n "$ff_file" ] && [ -f "$ff_file" ] || return 1
+	grep -qi 'nikki' "$ff_file" 2>/dev/null
+}
+
+feed_current() {
+	ff_file="$(feed_source_file 2>/dev/null || true)"; ff_line="$(feed_expected_line 2>/dev/null || true)"
+	[ -n "$ff_file" ] && [ -n "$ff_line" ] && [ -f "$ff_file" ] || return 1
+	grep -Fqx "$ff_line" "$ff_file" 2>/dev/null
+}
+
+# 兼容旧测试和外部调用；这里表示“存在与当前固件/架构一致的 Nikki 官方源”。
+feed_present() { feed_current; }
+
+check_existing_nikki_feed() {
+	# 只在即将安装/更新 Nikki 主体时调用；状态扫描和组件单项维护不会触发添加源。
+	if feed_any; then NIKKI_FEED_ORIGINAL_ANY=1; fi
+	if feed_current; then
+		key_info "检测到与当前 ${OFFICIAL_BRANCH}/${OPENWRT_ARCH} 一致的 Nikki 官方软件源，正在验证软件包索引"
+		if pkg_update_once >/dev/null 2>&1; then
+			NIKKI_FEED_READY=1
 			return 0
 		fi
-		warn "本次脚本会话已尝试添加 Nikki 软件源但未成功，不重复执行 feed.sh"
+		warn "Nikki 软件源存在但索引刷新失败，将重新执行官方 feed.sh"
+	fi
+	return 1
+}
+
+add_nikki_feed_once() {
+	if [ "$NIKKI_FEED_ATTEMPTED" -eq 1 ]; then
+		[ "$NIKKI_FEED_READY" -eq 1 ] && { key_info "复用本次会话的 Nikki 软件源和软件包索引"; return 0; }
+		warn "本次会话已完成 Nikki 软件源处理但未成功，不再重复改写软件源"
 		return 1
 	fi
 	NIKKI_FEED_ATTEMPTED=1
+	if check_existing_nikki_feed; then
+		key_info "Nikki 软件源校验通过，本次会话后续直接复用"
+		return 0
+	fi
 	[ -n "$DOWNLOADER" ] || select_downloader
 	anf_script="$WORK_DIR/feed.sh"
 	anf_url="https://raw.githubusercontent.com/${NIKKI_REPO}/refs/heads/main/feed.sh"
-	info "本次脚本运行将执行一次 Nikki 官方 feed.sh（不检查现有软件源）"
-	# -e 让官方脚本内部的密钥下载、写源或索引刷新任一步失败时返回非零；不额外检查现有源。
-	if fetch_url "$anf_url" "$anf_script" script && grep -q 'nikkinikki.pages.dev' "$anf_script" && (cd "$WORK_DIR" && ash -e "$anf_script"); then
-		NIKKI_FEED_READY=1
-		PKG_INDEX_READY=1
-		ok "Nikki 官方软件源已添加，软件包索引已刷新；本次会话后续直接复用"
-		return 0
-	fi
-	NIKKI_FEED_READY=0
-	PKG_INDEX_READY=0
-	warn "Nikki 官方软件源添加失败；本次会话不重复执行 feed.sh"
+	fetch_url "$anf_url" "$anf_script" script || {
+		warn "Nikki 官方 feed.sh 下载失败，稍后将切换方案 B"
+		return 1
+	}
+	grep -q 'nikkinikki.pages.dev' "$anf_script" || { warn "feed.sh 内容校验失败"; return 1; }
+	anf_attempt=1
+	while [ "$anf_attempt" -le 3 ]; do
+		key_info "执行 Nikki 官方 feed.sh（尝试 ${anf_attempt}/3）"
+		if [ "$DETAIL_OUTPUT" = 1 ]; then
+			(cd "$WORK_DIR" && ash -e "$anf_script")
+		else
+			(cd "$WORK_DIR" && ash -e "$anf_script") >/dev/null 2>&1
+		fi
+		if [ "$?" -eq 0 ] && feed_current && pkg_update_once >/dev/null 2>&1; then
+			NIKKI_FEED_READY=1
+			NIKKI_FEED_ADDED_SESSION=1
+			ok "Nikki 官方软件源已添加并通过索引验证；本次会话后续复用"
+			return 0
+		fi
+		[ "$anf_attempt" -lt 3 ] && sleep 2
+		anf_attempt=$((anf_attempt + 1))
+	done
+	NIKKI_FEED_READY=0; PKG_INDEX_READY=0
+	warn "Nikki 官方软件源连续 3 次添加/索引验证失败，将切换方案 B"
 	return 1
 }
 
@@ -713,12 +855,17 @@ install_or_update_nikki() {
 	fi
 
 	if [ "$io_success" -ne 1 ]; then
+		# 方案 B 是同一主体安装事务的后备路径；方案 A 的临时下载失败不应阻断 B。
+		DOWNLOAD_FAILURES=0
 		install_url="https://raw.githubusercontent.com/${NIKKI_REPO}/refs/heads/main/install.sh"
 		io_before="$(nikki_version 2>/dev/null || true)"
 		io_b_ok=1
 		fetch_url "$install_url" "$install_script" script || io_b_ok=0
 		[ "$io_b_ok" -ne 1 ] || grep -q "Nikki's installer" "$install_script" || io_b_ok=0
-		[ "$io_b_ok" -ne 1 ] || (cd "$WORK_DIR" && ash "$install_script") || io_b_ok=0
+		if [ "$io_b_ok" -eq 1 ]; then
+			if [ "$DETAIL_OUTPUT" = 1 ]; then (cd "$WORK_DIR" && ash "$install_script") || io_b_ok=0
+			else (cd "$WORK_DIR" && ash "$install_script") >/dev/null 2>&1 || io_b_ok=0; fi
+		fi
 		[ "$io_b_ok" -ne 1 ] || PKG_INDEX_READY=1
 		if [ "$io_b_ok" -eq 1 ] && [ "$PKG_MANAGER" = "apk" ]; then
 			io_repo="https://nikkinikki.pages.dev/${OFFICIAL_BRANCH}/${OPENWRT_ARCH}/nikki/packages.adb"
@@ -1475,6 +1622,103 @@ read_user_input() {
 	fi
 }
 
+backup_archive_name() {
+	ba_stamp="$(date '+%Y%m%d-%H%M%S' 2>/dev/null || printf '%s' unknown)"
+	printf '%s/nikki-settings-%s.tar.gz\n' "$SETTINGS_BACKUP_DIR" "$ba_stamp"
+}
+
+backup_settings_create() {
+	command -v tar >/dev/null 2>&1 || { warn "系统缺少 tar，无法创建设置备份"; return 1; }
+	[ -f /etc/config/nikki ] || { warn "未找到 /etc/config/nikki，当前没有可备份的 Nikki 插件设置"; return 1; }
+	mkdir -p "$SETTINGS_BACKUP_DIR" || { warn "无法创建备份目录：$SETTINGS_BACKUP_DIR"; return 1; }
+	bs_archive="$(backup_archive_name)"
+	bs_tmp="${bs_archive}.tmp.$$"
+	if tar -czf "$bs_tmp" -C /etc/config nikki; then
+		mv -f -- "$bs_tmp" "$bs_archive"
+		chmod 600 "$bs_archive" 2>/dev/null || true
+		ok "Nikki 插件设置备份完成：$bs_archive"
+		return 0
+	fi
+	rm -f -- "$bs_tmp" 2>/dev/null || true
+	warn "设置备份失败"
+	return 1
+}
+
+backup_settings_export() {
+	command -v tar >/dev/null 2>&1 || { warn "系统缺少 tar，无法导出设置备份"; return 1; }
+	[ -f /etc/config/nikki ] || { warn "未找到 /etc/config/nikki，当前没有可导出的 Nikki 插件设置"; return 1; }
+	say "导出备份会包含 Nikki 插件 UCI 设置，不包含内核、GeoX、Zashboard、订阅及自定义 YAML。"
+	say "请输入路由器上的目标文件路径；完成后可用 scp 下载到电脑任意位置。"
+	prompt '>>> 目标路径（留空使用 /tmp/nikki-settings-export.tar.gz）：'
+	read_user_input || return 1
+	be_path="$(normalize_menu_answer "$USER_INPUT")"
+	[ -n "$be_path" ] || be_path=/tmp/nikki-settings-export.tar.gz
+	case "$be_path" in */) be_path="${be_path}nikki-settings-export.tar.gz" ;; esac
+	be_dir="${be_path%/*}"; [ "$be_dir" = "$be_path" ] && be_dir=.
+	mkdir -p "$be_dir" || { warn "无法创建导出目录：$be_dir"; return 1; }
+	be_tmp="${be_path}.tmp.$$"
+	if tar -czf "$be_tmp" -C /etc/config nikki; then
+		mv -f -- "$be_tmp" "$be_path"
+		chmod 600 "$be_path" 2>/dev/null || true
+		ok "设置备份已导出：$be_path"
+		say "电脑端下载示例：scp root@路由器IP:$be_path ."
+		return 0
+	fi
+	rm -f -- "$be_tmp" 2>/dev/null || true
+	warn "设置备份导出失败"
+	return 1
+}
+
+backup_settings_restore() {
+	command -v tar >/dev/null 2>&1 || { warn "系统缺少 tar，无法恢复设置"; return 1; }
+	br_default=""
+	if [ -d "$SETTINGS_BACKUP_DIR" ]; then
+		br_default="$(ls -1t "$SETTINGS_BACKUP_DIR"/nikki-settings-*.tar.gz 2>/dev/null | head -n 1 || true)"
+	fi
+	say "恢复仅覆盖 /etc/config/nikki，不会修改内核、GeoX、Zashboard、订阅或自定义 YAML。"
+	[ -n "$br_default" ] && say "最近备份：$br_default"
+	prompt '>>> 请输入备份文件路径（留空使用最近备份）：'
+	read_user_input || return 1
+	br_archive="$(normalize_menu_answer "$USER_INPUT")"; [ -n "$br_archive" ] || br_archive="$br_default"
+	[ -f "$br_archive" ] || { warn "备份文件不存在：$br_archive"; return 1; }
+	br_tmp="/tmp/nikki-settings-restore.${PID}"
+	rm -rf -- "$br_tmp" 2>/dev/null || true
+	mkdir -p "$br_tmp" || return 1
+	if ! tar -xzf "$br_archive" -C "$br_tmp" 2>/dev/null || [ ! -f "$br_tmp/nikki" ]; then
+		rm -rf -- "$br_tmp"; warn "备份格式无效，未恢复任何文件"; return 1
+	fi
+	br_target="/etc/config/nikki.restore.${PID}"
+	if cp -p "$br_tmp/nikki" "$br_target" && mv -f -- "$br_target" /etc/config/nikki; then
+		rm -rf -- "$br_tmp"
+		uci >/dev/null 2>&1 || true
+		ok "Nikki 插件设置已恢复；如需生效，请在 LuCI 保存或重启 Nikki"
+		return 0
+	fi
+	rm -f -- "$br_target" 2>/dev/null || true
+	rm -rf -- "$br_tmp"; warn "设置恢复失败，原文件未被完整替换"; return 1
+}
+
+backup_menu() {
+	while :; do
+		flow_title "备份与恢复"
+		menu_line "  1）一键备份 Nikki 插件设置"
+		say "     仅备份 /etc/config/nikki，不包含内核、自定义 YAML、订阅和运行数据。"
+		menu_line "  2）备份导出｜生成可用 scp 下载到电脑的压缩包"
+		menu_line "  3）一键恢复备份｜仅恢复 Nikki 插件设置"
+		menu_line "  4）返回主菜单"
+		menu_line "================================================"
+		prompt '>>> 请手动选择 [1-4]：'
+		read_user_input || fatal "无法读取备份与恢复菜单选项"
+		case "$USER_INPUT" in
+			1) backup_settings_create || true ;;
+			2) backup_settings_export || true ;;
+			3) backup_settings_restore || true ;;
+			4) return 0 ;;
+			*) warn "无效选项，请重新输入" ;;
+		esac
+	done
+}
+
 core_is_installed() { [ -s "$CORE_PATH" ]; }
 
 core_installed_version() {
@@ -2072,6 +2316,7 @@ manual_live_input_supported() {
 	[ -c /dev/tty ] && ( : </dev/tty ) 2>/dev/null || return 1
 	command -v stty >/dev/null 2>&1 || return 1
 	# dash 等 read 不支持 -n；在短管道的子 shell 中探测，绝不占用用户输入。
+	# shellcheck disable=SC3045,SC2034
 	printf x | ( IFS= read -r -n 1 mlis_char ) >/dev/null 2>&1
 }
 
@@ -2099,6 +2344,7 @@ manual_batch_read_selection() {
 		manual_batch_render
 		prompt ">>> 当前输入：${mbr_buffer}"
 		mbr_char=""
+		# shellcheck disable=SC3045
 		IFS= read -r -n 1 mbr_char </dev/tty || true
 		case "$mbr_char" in
 			"") break ;;
@@ -2148,12 +2394,21 @@ main_menu() {
 		menu_line "================ Nikki 全方位维护 ================"
 		menu_line "  1）自动维护｜选择预设方案，一键执行"
 		menu_line "  2）手动维护｜自由多选组件与版本，统一执行"
-		menu_line "  3）卸载重置｜删除 Nikki 与运行数据，可选是否删除官方源"
-		menu_line "  4）退出脚本"
+		menu_line "  3）备份与恢复｜仅处理 Nikki 插件设置"
+		menu_line "  4）卸载重置｜删除 Nikki 与运行数据，可选是否删除官方源"
+		menu_line "  5）退出脚本"
+		if [ "$DETAIL_OUTPUT" = 1 ]; then say "${B}${Y}日志模式：详细流程（可重新执行脚本时去掉 --verbose 恢复简洁输出）${N}"; else say "${B}${Y}日志模式：关键步骤（需要完整过程时使用 --verbose）${N}"; fi
 		menu_line "================================================"
-		prompt '>>> 请手动选择 [1-4]：'
+		prompt '>>> 请手动选择 [1-5]：'
 		read_user_input || fatal "无法读取主菜单选项"
-		case "$USER_INPUT" in 1) MAIN_CHOICE="auto"; return 0 ;; 2) MAIN_CHOICE="manual"; return 0 ;; 3) MAIN_CHOICE="uninstall"; return 0 ;; 4) MAIN_CHOICE="exit"; return 0 ;; *) warn "无效选项，请重新输入" ;; esac
+		case "$USER_INPUT" in
+			1) MAIN_CHOICE="auto"; return 0 ;;
+			2) MAIN_CHOICE="manual"; return 0 ;;
+			3) MAIN_CHOICE="backup"; return 0 ;;
+			4) MAIN_CHOICE="uninstall"; return 0 ;;
+			5) MAIN_CHOICE="exit"; return 0 ;;
+			*) warn "无效选项，请重新输入" ;;
+		esac
 	done
 }
 
@@ -2403,6 +2658,7 @@ uninstall_nikki() {
 		ok "已按选择保留 Nikki 软件源与签名密钥；卸载流程未检查或改写现有源"
 		say "Nikki 已卸载，相关数据残留已清理，软件源及签名密钥保持不变！"
 	fi
+	[ ! -d "$SETTINGS_BACKUP_DIR" ] || say "已保留插件设置备份目录：$SETTINGS_BACKUP_DIR"
 	safe_rm_tree "$un_backup" >/dev/null 2>&1 || true
 	return 0
 }
@@ -2450,6 +2706,7 @@ print_core_switch_plan() {
 }
 
 run_core_switch_workflow() {
+	DOWNLOAD_FAILURES=0
 	reset_workflow_state
 	set_all_update_statuses user_skipped
 	CORE_UPDATE_STATUS="not_selected"; MODEL_UPDATE_STATUS="not_selected"
@@ -2540,6 +2797,7 @@ set_component_only_default_statuses() {
 }
 
 run_component_only_workflow() {
+	DOWNLOAD_FAILURES=0
 	reset_workflow_state
 	set_component_only_default_statuses
 	print_component_only_plan
@@ -2616,6 +2874,7 @@ run_component_only_workflow() {
 
 run_update_workflow() {
 	reset_workflow_state
+	DOWNLOAD_FAILURES=0
 	if [ "$ENVIRONMENT_READY" -ne 1 ]; then
 		run_environment_preflight || return 2
 	fi
@@ -2634,7 +2893,12 @@ run_update_workflow() {
 	flow_title "步骤 1/6：Nikki 插件主体及依赖"
 	if [ "$NIKKI_UPDATE_CHOICE" = update ]; then
 		select_downloader
-		install_or_update_nikki || fatal "Nikki 安装或更新失败，已回滚安装阶段改动"
+		if ! install_or_update_nikki; then
+			NIKKI_UPDATE_STATUS="skipped"
+			warn "Nikki 安装/更新失败，已执行回滚；请检查网络后从主菜单重试"
+			print_summary
+			return 2
+		fi
 		NIKKI_UPDATE_STATUS="updated"
 	else
 		NIKKI_UPDATE_STATUS="user_skipped"
@@ -2662,10 +2926,7 @@ main() {
 	mkdir -p "$WORK_DIR" || fatal "无法创建临时目录：$WORK_DIR"
 	# 官方要求、系统环境和兼容性只在脚本开头检查一次；返回主菜单时不重复输出。
 	run_environment_preflight || exit 1
-	flow_title "Nikki 官方软件源（每次脚本运行一次）"
-	if ! add_nikki_feed_once; then
-		warn "本次会话添加 Nikki 软件源失败；菜单仍可使用，涉及 Nikki 安装时将尝试方案 B"
-	fi
+	key_info "Nikki 软件源仅在执行 Nikki 主体安装/更新时处理；组件状态扫描不会添加或改写软件源"
 
 	# 命令行模式保持适合自动化的单次执行语义。
 	if [ -n "$CLI_ACTION" ]; then
@@ -2684,6 +2945,10 @@ main() {
 		manual_status_scan "$mm_installed"
 		main_menu "$mm_installed"
 		[ "$MAIN_CHOICE" != exit ] || exit 0
+		if [ "$MAIN_CHOICE" = backup ]; then
+			backup_menu
+			continue
+		fi
 		if [ "$MAIN_CHOICE" = uninstall ]; then
 			if ! uninstall_nikki; then warn "卸载未执行，返回主菜单"; continue; fi
 			if post_action_menu uninstall; then continue; else exit 0; fi
@@ -2715,6 +2980,10 @@ main() {
 		elif [ "$COMPONENT_ONLY" -eq 1 ]; then ruw_command=run_component_only_workflow
 		else ruw_command=run_update_workflow; fi
 		if "$ruw_command"; then
+			if [ "$DOWNLOAD_FAILURES" -gt 0 ]; then
+				warn "至少有一个远程下载项目在直连和全部反代重试三轮后仍失败，请检查网络并从主菜单重试"
+				continue
+			fi
 			if post_action_menu maintenance; then continue; else exit 0; fi
 		else
 			ruw_rc=$?
