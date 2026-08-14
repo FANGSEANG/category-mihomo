@@ -23,7 +23,7 @@
 
 set -u
 
-SCRIPT_VERSION="3.7.0"
+SCRIPT_VERSION="3.7.0-opt6"
 ACTION=""; CLI_ACTION=""; MAIN_CHOICE=""; WORKFLOW_MODE="命令行维护"
 ENVIRONMENT_READY=0; PKG_INDEX_READY=0; NIKKI_FEED_READY=0; NIKKI_FEED_ATTEMPTED=0; STATUS_SCAN_READY=0
 NIKKI_FEED_ORIGINAL_ANY=0; NIKKI_FEED_ADDED_SESSION=0; NIKKI_FEED_EXIT_PROMPTED=0
@@ -31,6 +31,9 @@ NIKKI_UPDATE_CHOICE="update"; LGBM_CHOICE="auto"; LGBM_SET=0
 GEOX_CHOICE="update"; ZASH_CHOICE="update"; ZASH_ASSET="dist.zip"; ZASH_VARIANT_LABEL="full"
 RULESET_CHOICE="skip"; MODEL_MAINTAIN=0
 CORE_SWITCH_ONLY=0; COMPONENT_ONLY=0; COMPONENT_ONLY_KIND=""; ASSUME_YES=0
+AUTO_UPGRADE_ONLY=0; FORCE_MAINTENANCE=0; FORCE_NIKKI_REINSTALL=0
+AUTO_SKIP_NIKKI=""; AUTO_SKIP_CORE=""; AUTO_SKIP_MODEL=""; AUTO_SKIP_GEOX=""; AUTO_SKIP_ZASH=""
+NONDEFAULT_CORE_PRESERVED=0; PRESERVED_CORE_KIND=""; SERVICE_RESTART_VERIFIED=0
 DETAIL_OUTPUT="${NIKKI_DETAIL:-0}"
 DOWNLOAD_FAILURES=0
 KEEP_BACKUP_ON_SUCCESS="${KEEP_BACKUP_ON_SUCCESS:-0}"; MIPS_FLOAT="${MIPS_FLOAT:-auto}"
@@ -59,8 +62,10 @@ PKG_MANAGER=unknown; FIREWALL=unknown; KERNEL_VERSION=unknown
 FIRMWARE_NAME=OpenWrt; FIRMWARE_DESCRIPTION="OpenWrt unknown"; FIRMWARE_DISPLAY="OpenWrt unknown"
 OPENWRT_VERSION=unknown; OPENWRT_ARCH=unknown; LUCI_BRANCH=""; LUCI_REVISION=""; LUCI_OPENWRT_SERIES=""
 CPU_ARCH=unknown; CPU_MODEL=unknown; AMD64_LEVEL=""; ASSET_ARCH=""; OFFICIAL_BRANCH=""
+MODEL_SHA_NEW=""
 
 CORE_BACKUP="${CORE_PATH}.rollback.${PID}"; MODEL_BACKUP="${MODEL_PATH}.rollback.${PID}"
+NONDEFAULT_CORE_BEFORE_NIKKI="${WORK_DIR}/nondefault-core.before-nikki"
 UI_BACKUP="${UI_TARGET}.rollback.${PID}"; GEOX_BACKUP="${RUN_DIR}/.geox-rollback.${PID}"
 CONFIG_BACKUP="/etc/config/nikki.rollback.${PID}"; SUBSCRIPTIONS_BACKUP="${WORK_DIR}/subscriptions.rollback"
 CORE_EXISTED=0; MODEL_EXISTED=0; UI_EXISTED=0; CONFIG_EXISTED=0; SUBSCRIPTIONS_EXISTED=0
@@ -778,12 +783,13 @@ add_nikki_feed_once() {
 	anf_attempt=1
 	while [ "$anf_attempt" -le 3 ]; do
 		key_info "执行 Nikki 官方 feed.sh（尝试 ${anf_attempt}/3）"
+		anf_feed_ok=0
 		if [ "$DETAIL_OUTPUT" = 1 ]; then
-			(cd "$WORK_DIR" && ash -e "$anf_script")
+			(cd "$WORK_DIR" && ash -e "$anf_script") && anf_feed_ok=1
 		else
-			(cd "$WORK_DIR" && ash -e "$anf_script") >/dev/null 2>&1
+			(cd "$WORK_DIR" && ash -e "$anf_script") >/dev/null 2>&1 && anf_feed_ok=1
 		fi
-		if [ "$?" -eq 0 ] && feed_current && pkg_update_once >/dev/null 2>&1; then
+		if [ "$anf_feed_ok" -eq 1 ] && feed_current && pkg_update_once >/dev/null 2>&1; then
 			NIKKI_FEED_READY=1
 			NIKKI_FEED_ADDED_SESSION=1
 			ok "Nikki 官方软件源已添加并通过索引验证；本次会话后续复用"
@@ -805,6 +811,8 @@ report_nikki_package_result() {
 		ok "Nikki 已安装：${rn_after}"
 	elif [ "$rn_before" != "$rn_after" ]; then
 		ok "Nikki 已更新：${rn_before} -> ${rn_after}"
+	elif [ "$FORCE_NIKKI_REINSTALL" -eq 1 ]; then
+		ok "Nikki 已强制重装：${rn_after}"
 	else
 		ok "Nikki 已执行安装/升级检查，当前版本 ${rn_after}（仓库最新可安装版本）"
 	fi
@@ -818,13 +826,28 @@ install_packages_from_feed() {
 	fi
 	case "$PKG_MANAGER" in
 		opkg)
-			# opkg install 会安装缺失包，并在索引存在较新版本时升级已安装包。
-			pkg_install nikki luci-app-nikki luci-i18n-nikki-zh-cn || return 1
+			if [ "$FORCE_NIKKI_REINSTALL" -eq 1 ] && [ -n "$ipf_before" ]; then
+				# 三者共同构成 Nikki 主体；强制方案重装已有包，同时补齐缺失的必需 UI/语言包。
+				if [ "$DETAIL_OUTPUT" = 1 ]; then opkg install --force-reinstall nikki luci-app-nikki luci-i18n-nikki-zh-cn
+				else opkg install --force-reinstall nikki luci-app-nikki luci-i18n-nikki-zh-cn >/dev/null 2>&1; fi || return 1
+			else
+				# opkg install 会安装缺失包，并在索引存在较新版本时升级已安装包。
+				pkg_install nikki luci-app-nikki luci-i18n-nikki-zh-cn || return 1
+			fi
 			;;
 		apk)
 			if [ -z "$ipf_before" ]; then
 				# 首次安装严格采用 Nikki 官方方案 A；内核包由 nikki 的依赖自动解析。
 				apk add nikki luci-app-nikki luci-i18n-nikki-zh-cn || return 1
+			elif [ "$FORCE_NIKKI_REINSTALL" -eq 1 ]; then
+				# 先升级并补齐必需包，再用 fix 强制校验/重装；兼容 apk 固件的修复语义。
+				if [ "$DETAIL_OUTPUT" = 1 ]; then
+					apk add --upgrade nikki luci-app-nikki luci-i18n-nikki-zh-cn && \
+						apk fix nikki luci-app-nikki luci-i18n-nikki-zh-cn
+				else
+					apk add --upgrade nikki luci-app-nikki luci-i18n-nikki-zh-cn >/dev/null 2>&1 && \
+						apk fix nikki luci-app-nikki luci-i18n-nikki-zh-cn >/dev/null 2>&1
+				fi || return 1
 			else
 				# 普通 apk add 会倾向保留已安装版本；后续维护使用 --upgrade。
 				apk add --upgrade nikki luci-app-nikki luci-i18n-nikki-zh-cn || return 1
@@ -919,6 +942,59 @@ wait_nikki() {
 	wn_i=0
 	while [ "$wn_i" -lt 15 ]; do nikki_running && return 0; sleep 1; wn_i=$((wn_i + 1)); done
 	return 1
+}
+
+preserve_nondefault_core_before_nikki() {
+	NONDEFAULT_CORE_PRESERVED=0; PRESERVED_CORE_KIND=""
+	[ "$NIKKI_UPDATE_CHOICE" = update ] && core_is_installed || return 0
+	pscbn_version="$(core_installed_version)"
+	pscbn_kind="$(core_installed_kind "$pscbn_version")"
+	case "$pscbn_kind" in smart|alpha) ;; *) return 0 ;; esac
+	# 明确切换到另一类型时尊重用户选择；日常维护、同类型维护和 Nikki-only 才保全。
+	[ "$ACTION" = skip ] || [ "$ACTION" = "$pscbn_kind" ] || return 0
+	cp -p "$CORE_PATH" "$NONDEFAULT_CORE_BEFORE_NIKKI" || return 1
+	chmod 0755 "$NONDEFAULT_CORE_BEFORE_NIKKI" || return 1
+	NONDEFAULT_CORE_PRESERVED=1; PRESERVED_CORE_KIND="$pscbn_kind"
+	info "已临时保全更新前的 $(core_kind_label "$pscbn_kind") 内核，防止 Nikki 默认依赖覆盖"
+}
+
+restore_nondefault_core_after_nikki() {
+	[ "$NONDEFAULT_CORE_PRESERVED" -eq 1 ] && [ -n "$PRESERVED_CORE_KIND" ] && [ -s "$NONDEFAULT_CORE_BEFORE_NIKKI" ] || return 0
+	rscan_current="$(core_installed_version 2>/dev/null || true)"
+	if [ "$(core_installed_kind "$rscan_current")" = "$PRESERVED_CORE_KIND" ]; then
+		info "Nikki 更新后仍保持 $(core_kind_label "$PRESERVED_CORE_KIND") 内核，无需恢复保全副本"
+		return 0
+	fi
+	rscan_new="${CORE_PATH}.restore.${PID}"
+	cp -p "$NONDEFAULT_CORE_BEFORE_NIKKI" "$rscan_new" || return 1
+	chmod 0755 "$rscan_new" || { rm -f -- "$rscan_new"; return 1; }
+	mv "$rscan_new" "$CORE_PATH" || { rm -f -- "$rscan_new"; return 1; }
+	CORE_UPDATE_STATUS="restored"
+	warn "Nikki 更新曾覆盖 $(core_kind_label "$PRESERVED_CORE_KIND") 内核；已原子恢复更新前内核，随后继续更新同类型内核"
+	return 0
+}
+
+binary_update_needs_restart() {
+	case "$NIKKI_UPDATE_STATUS:$CORE_UPDATE_STATUS" in
+		updated:*|*:updated|*:restored) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+ensure_nikki_restarted_after_binary_update() {
+	binary_update_needs_restart || return 0
+	flow_title "最后一步：重启 Nikki 服务使主体/内核更新生效"
+	if [ "$SERVICE_RESTART_VERIFIED" -eq 1 ] && nikki_running; then
+		progress_done "Nikki 已在事务提交时完成整服务重启并验证，无需重复中断连接"
+		return 0
+	fi
+	if ! "$NIKKI_INIT" restart || ! wait_nikki; then
+		err "Nikki 主体或内核已更新，但整服务重启验证失败；请检查日志后手动执行 $NIKKI_INIT restart"
+		return 1
+	fi
+	SERVICE_RESTART_VERIFIED=1
+	progress_done "Nikki 整服务已重启并确认运行，新主体/内核已经生效"
+	return 0
 }
 
 begin_transaction() {
@@ -1099,6 +1175,15 @@ auto_model_choice() {
 	else return 1; fi
 }
 
+backup_model_before_forced_replace() {
+	[ "$FORCE_MAINTENANCE" -eq 1 ] && [ -s "$MODEL_PATH" ] || return 0
+	bmfr_stamp="$(date '+%Y%m%d-%H%M%S' 2>/dev/null || printf '%s' "$PID")"
+	mkdir -p "$SETTINGS_BACKUP_DIR" || return 1
+	bmfr_target="$SETTINGS_BACKUP_DIR/Model.bin.before-force.${bmfr_stamp}.${PID}"
+	cp -p "$MODEL_PATH" "$bmfr_target" || return 1
+	ok "强制维护前的 LightGBM 已持久备份：$bmfr_target"
+}
+
 prepare_model() {
 	pm_choice="$LGBM_CHOICE"
 	progress_line "1/5" "确定本轮 LightGBM 模型规格"
@@ -1130,9 +1215,12 @@ prepare_model() {
 	fetch_url "$REC_URL" "$pm_file" model || return 1
 	progress_line "4/5" "校验文件格式、大小、SHA-256 和剩余存储空间"
 	verify_download "$pm_file" "$REC_SHA" "$REC_SIZE" || { err "模型大小/SHA-256 校验失败"; return 1; }
+	MODEL_SHA_NEW="$(sha256sum "$pm_file" 2>/dev/null | awk '{print $1}')"
+	[ -n "$MODEL_SHA_NEW" ] || { err "无法计算 LightGBM SHA-256"; return 1; }
 	pm_free="$(free_kb_at "$RUN_DIR")"; pm_need=$((($(wc -c < "$pm_file") + 1023) / 1024 + 12 * 1024))
 	[ "$pm_free" -ge "$pm_need" ] || { err "模型分区空间不足（需含预留约 $((pm_need/1024)) MiB）"; return 1; }
 	progress_line "5/5" "备份现有模型并原子替换"
+	backup_model_before_forced_replace || { err "无法建立 LightGBM 持久备份"; return 1; }
 	cp "$pm_file" "${MODEL_PATH}.new.${PID}" || return 1
 	chmod 0644 "${MODEL_PATH}.new.${PID}" || return 1
 	if [ -f "$MODEL_PATH" ] && [ ! -e "$MODEL_BACKUP" ]; then cp -p "$MODEL_PATH" "$MODEL_BACKUP" || return 1; fi
@@ -1398,6 +1486,7 @@ write_state() {
 		printf 'CORE_KIND=%s\n' "$(sanitize_state "$CORE_KIND_NEW")"
 		printf 'CORE_VERSION=%s\n' "$(sanitize_state "$NEW_CORE_VERSION")"
 		printf 'MODEL=%s\n' "$(sanitize_state "${MODEL_LABEL_NEW:-不适用}")"
+		printf 'MODEL_SHA256=%s\n' "$(sanitize_state "${MODEL_SHA_NEW:-}")"
 		printf 'GEOX_DATE=%s\n' "$(sanitize_state "$GEOX_DATE_NEW")"
 		printf 'ZASH_VERSION=%s\n' "$(sanitize_state "$ZASH_VERSION_NEW")"
 		printf 'UPDATED_AT=%s\n' "$(date '+%Y/%m/%d %H:%M:%S' 2>/dev/null || true)"
@@ -1410,6 +1499,7 @@ commit_transaction() {
 		info "重启 Nikki 并验证服务状态……"
 		if ! "$NIKKI_INIT" restart || ! wait_nikki; then return 1; fi
 		ok "Nikki 已使用新内核正常运行"
+		binary_update_needs_restart && SERVICE_RESTART_VERIFIED=1
 	else
 		info "更新前 Nikki 未运行，保持停止状态"
 	fi
@@ -1424,6 +1514,7 @@ initialize_maintenance_state() {
 	CORE_KIND_NEW=""
 	NEW_CORE_VERSION="$("$CORE_PATH" -v 2>/dev/null | head -n 1 || true)"
 	MODEL_LABEL_NEW="$(state_get MODEL)"
+	MODEL_SHA_NEW="$(state_get MODEL_SHA256)"
 	GEOX_DATE_NEW="$(state_get GEOX_DATE)"
 	ZASH_VERSION_NEW="$(state_get ZASH_VERSION)"
 	if [ -n "$NEW_CORE_VERSION" ]; then
@@ -1436,7 +1527,7 @@ initialize_maintenance_state() {
 
 run_maintenance() {
 	rm_kind="$1"
-	if [ "$rm_kind" = smart ] && [ "$LGBM_CHOICE" != skip ]; then MODEL_MAINTAIN=1; fi
+	if [ "$rm_kind" = smart ] && [ "$LGBM_CHOICE" != skip ] && [ -z "$AUTO_SKIP_MODEL" ]; then MODEL_MAINTAIN=1; fi
 	if [ "$rm_kind" = skip ] && [ "$MODEL_MAINTAIN" -eq 0 ] && [ "$GEOX_CHOICE" = skip ] && [ "$ZASH_CHOICE" = skip ] && [ "$RULESET_CHOICE" = skip ]; then
 		flow_title "步骤 2/6：Mihomo 内核"
 		if [ "$NIKKI_UPDATE_CHOICE" = update ]; then progress_skip "未指定额外内核，保留 Nikki 安装/更新后的默认稳定版 mihomo-meta"
@@ -1449,10 +1540,10 @@ run_maintenance() {
 		progress_skip "已按计划跳过 Zashboard，保留当前面板"
 		flow_title "步骤 6/6：rule-set 自定义规则集"
 		progress_skip "已按计划跳过 rule-set 更新"
-		CORE_UPDATE_STATUS="user_skipped"
-		MODEL_UPDATE_STATUS="user_skipped"
-		GEOX_UPDATE_STATUS="user_skipped"
-		ZASH_UPDATE_STATUS="user_skipped"
+		CORE_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_CORE")"
+		MODEL_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_MODEL")"
+		GEOX_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_GEOX")"
+		ZASH_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_ZASH")"
 		RULESET_UPDATE_STATUS="user_skipped"
 		return 0
 	fi
@@ -1472,11 +1563,14 @@ run_maintenance() {
 		smart|alpha|stable)
 			case "$rm_kind" in smart) rm_core_label="Smart" ;; alpha) rm_core_label="开发预览版" ;; stable) rm_core_label="稳定版" ;; esac
 			rm_old_kind="$CORE_KIND_NEW"; rm_old_core_version="$NEW_CORE_VERSION"
+			rm_old_core_status="$CORE_UPDATE_STATUS"
 			if prepare_core "$rm_kind"; then CORE_UPDATE_STATUS="updated"; MAINT_SUCCESS=$((MAINT_SUCCESS + 1));
-			else CORE_KIND_NEW="$rm_old_kind"; NEW_CORE_VERSION="$rm_old_core_version"; CORE_UPDATE_STATUS="skipped"; warn "无法更新 ${rm_core_label}内核，已跳过此项并保留原文件；建议稍后手动更新"; fi
+			else CORE_KIND_NEW="$rm_old_kind"; NEW_CORE_VERSION="$rm_old_core_version";
+				if [ "$rm_old_core_status" = restored ]; then CORE_UPDATE_STATUS="restored"; else CORE_UPDATE_STATUS="skipped"; fi
+				warn "无法更新 ${rm_core_label}内核，已跳过此项并保留原文件；建议稍后手动更新"; fi
 			;;
 		skip)
-			CORE_UPDATE_STATUS="user_skipped"
+			[ "$CORE_UPDATE_STATUS" = restored ] || CORE_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_CORE")"
 			MODEL_UPDATE_STATUS="not_selected"
 			if [ "$NIKKI_UPDATE_CHOICE" = update ]; then progress_skip "未指定额外内核，保留 Nikki 安装/更新后的默认稳定版 mihomo-meta"
 			else progress_skip "已按选择跳过内核更新，保留原有版本"; fi
@@ -1487,8 +1581,11 @@ run_maintenance() {
 		if prepare_model; then MODEL_UPDATE_STATUS="updated"; MAINT_SUCCESS=$((MAINT_SUCCESS + 1));
 		else MODEL_UPDATE_STATUS="skipped"; warn "无法更新 LightGBM 模型，已跳过此项并保留原文件；建议稍后手动更新"; fi
 	else
-		MODEL_UPDATE_STATUS="user_skipped"
-		if [ -s "$MODEL_PATH" ]; then progress_skip "本轮未选择 LightGBM 更新，保留现有模型"
+		MODEL_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_MODEL")"
+		if [ "$AUTO_SKIP_MODEL" = protected ]; then progress_skip "检测到疑似自定义 LightGBM，自动维护已保护并保留现有模型"
+		elif [ "$AUTO_SKIP_MODEL" = latest ]; then progress_skip "LightGBM 已是最新官方资产，跳过下载与替换"
+		elif [ "$AUTO_SKIP_MODEL" = unknown ]; then progress_skip "LightGBM 最新资产状态查询失败，自动维护安全跳过"
+		elif [ -s "$MODEL_PATH" ]; then progress_skip "本轮未选择 LightGBM 更新，保留现有模型"
 		else progress_skip "当前 $(paint_missing '未安装') LightGBM，本轮不安装模型"; fi
 		[ "$rm_kind" != smart ] || [ -s "$MODEL_PATH" ] || warn "当前未检测到 LightGBM 模型，Smart 内核相关功能可能不可用"
 	fi
@@ -1497,13 +1594,13 @@ run_maintenance() {
 		rm_old_geox="$GEOX_DATE_NEW"
 		if prepare_geox; then GEOX_UPDATE_STATUS="updated"; MAINT_SUCCESS=$((MAINT_SUCCESS + 1));
 		else GEOX_DATE_NEW="$rm_old_geox"; GEOX_UPDATE_STATUS="skipped"; warn "无法更新 GeoX 数据库，已跳过此项并保留原文件；建议稍后手动更新"; fi
-	else GEOX_UPDATE_STATUS="user_skipped"; progress_skip "已按计划跳过 GeoX 数据库更新，保留当前数据库"; fi
+	else GEOX_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_GEOX")"; progress_auto_skip "GeoX" "$AUTO_SKIP_GEOX" "已按计划跳过更新，保留当前数据库"; fi
 	flow_title "步骤 5/6：Zashboard 面板"
 	if [ "$ZASH_CHOICE" = update ]; then
 		rm_old_zash="$ZASH_VERSION_NEW"
 		if prepare_zashboard; then ZASH_UPDATE_STATUS="updated"; MAINT_SUCCESS=$((MAINT_SUCCESS + 1));
 		else ZASH_VERSION_NEW="$rm_old_zash"; ZASH_UPDATE_STATUS="skipped"; warn "无法更新 Zashboard，已跳过此项并保留原文件；建议在 Nikki 中手动更新面板"; fi
-	else ZASH_UPDATE_STATUS="user_skipped"; progress_skip "已按计划跳过 Zashboard 更新，保留当前面板"; fi
+	else ZASH_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_ZASH")"; progress_auto_skip "Zashboard" "$AUTO_SKIP_ZASH" "已按计划跳过更新，保留当前面板"; fi
 	flow_title "步骤 6/6：rule-set 自定义规则集"
 	# 先提交会影响运行配置的文件，让随后刷新的 rule-provider 对应最新 YAML。
 	if [ "$MAINT_SUCCESS" -gt 0 ]; then
@@ -1543,8 +1640,10 @@ print_core_compatibility_hint() {
 summary_status() {
 	ss_status="$1"; ss_updated="${2:-0}"; ss_total="${3:-0}"
 	case "$ss_status" in
-		updated) printf '%s' "$ps_latest" ;; skipped) printf '%s' "$ps_failed" ;;
+		updated|latest) printf '%s' "$ps_latest" ;; skipped) printf '%s' "$ps_failed" ;;
 		user_skipped) printf '%s' "$ps_user_skipped" ;;
+		unknown) printf '%b' "${B}${Y}远程版本未知，自动安全跳过${N}" ;;
+		protected) printf '%b' "${B}${Y}疑似自定义文件，已保护并跳过${N}" ;;
 		partial) printf '%b' "${B}${Y}部分成功（${ss_updated}/${ss_total}）${N}" ;;
 		not_present) printf '%b' "${B}${Y}未配置，已安全跳过${N}" ;;
 		*) return 0 ;;
@@ -1568,7 +1667,9 @@ print_summary() {
 	ps_nikki_result="$(summary_status "$NIKKI_UPDATE_STATUS")"
 	summary_item "当前 Nikki" "$ps_nikki" "$ps_nikki_result"
 	case "$CORE_UPDATE_STATUS" in
-		updated) ps_core_result="$ps_latest" ;;
+		updated|latest) ps_core_result="$ps_latest" ;;
+		restored) ps_core_result="${B}${G}Nikki 更新后已恢复原非默认内核并生效${N}" ;;
+		unknown) ps_core_result="${B}${Y}远程版本未知，自动安全跳过${N}" ;;
 		skipped) ps_core_result="$ps_failed" ;;
 		user_skipped)
 			if [ "$NIKKI_UPDATE_CHOICE" = update ] && [ "$ACTION" = skip ]; then ps_core_result="$ps_nikki_default_core"; else ps_core_result="$ps_user_skipped"; fi
@@ -1576,11 +1677,13 @@ print_summary() {
 		*) ps_core_result="" ;;
 	esac
 	case "$MODEL_UPDATE_STATUS" in
-		updated) ps_model_result="$ps_latest" ;;
+		updated|latest) ps_model_result="$ps_latest" ;;
 		removed) ps_model_result="${B}${G}已清除（Dev/稳定版内核无需 LightGBM）${N}" ;;
 		not_present) ps_model_result="${B}${G}未安装，无需清理${N}" ;;
 		skipped) ps_model_result="$ps_failed" ;;
 		user_skipped) ps_model_result="$ps_user_skipped" ;;
+		unknown) ps_model_result="${B}${Y}远程版本未知，自动安全跳过${N}" ;;
+		protected) ps_model_result="${B}${Y}疑似自定义模型，已保护并跳过${N}" ;;
 		*) ps_model_result="" ;;
 	esac
 	ps_geox_result="$(summary_status "$GEOX_UPDATE_STATUS")"; ps_zash_result="$(summary_status "$ZASH_UPDATE_STATUS")"
@@ -1673,7 +1776,8 @@ backup_settings_restore() {
 	command -v tar >/dev/null 2>&1 || { warn "系统缺少 tar，无法恢复设置"; return 1; }
 	br_default=""
 	if [ -d "$SETTINGS_BACKUP_DIR" ]; then
-		br_default="$(ls -1t "$SETTINGS_BACKUP_DIR"/nikki-settings-*.tar.gz 2>/dev/null | head -n 1 || true)"
+		# 备份名含可排序时间戳；按文件名倒序可避免用 ls 解析路径。
+		br_default="$(find "$SETTINGS_BACKUP_DIR" -maxdepth 1 -type f -name 'nikki-settings-*.tar.gz' 2>/dev/null | sort -r | head -n 1 || true)"
 	fi
 	say "恢复仅覆盖 /etc/config/nikki，不会修改内核、GeoX、Zashboard、订阅或自定义 YAML。"
 	[ -n "$br_default" ] && say "最近备份：$br_default"
@@ -1804,6 +1908,7 @@ existing_auto_eligible() {
 }
 
 configure_existing_auto_plan() {
+	AUTO_UPGRADE_ONLY=1; FORCE_MAINTENANCE=0; FORCE_NIKKI_REINSTALL=0
 	CORE_SWITCH_ONLY=0; COMPONENT_ONLY=0; COMPONENT_ONLY_KIND=""
 	ceap_version="$(core_installed_version)"
 	ACTION="$(core_installed_kind "$ceap_version")"
@@ -1836,11 +1941,21 @@ configure_existing_auto_plan() {
 	info "rule-set 仅在已有 HTTP provider 配置时更新；未配置会自动跳过"
 }
 
+configure_existing_reinstall_plan() {
+	configure_existing_auto_plan || return 1
+	AUTO_UPGRADE_ONLY=0; FORCE_MAINTENANCE=1; FORCE_NIKKI_REINSTALL=1
+	WORKFLOW_MODE="自动维护：强制重装现有组件"
+	# 12 是明确的强制重装动作：已有模型按识别出的同规格重装；prepare_model 会先持久备份旧文件。
+	return 0
+}
+
 configure_full_auto_plan() {
+	# 完整维护 2-4 是明确选择的既定方案：与手动维护相同，强制安装/更新全部方案项目。
+	AUTO_UPGRADE_ONLY=0; FORCE_MAINTENANCE=1; FORCE_NIKKI_REINSTALL=1
 	CORE_SWITCH_ONLY=0; COMPONENT_ONLY=0; COMPONENT_ONLY_KIND=""
 	ACTION="$1"
 	case "$ACTION" in smart|alpha|stable) ;; *) return 1 ;; esac
-	WORKFLOW_MODE="自动维护：指定完整方案"
+	WORKFLOW_MODE="自动维护：强制执行指定完整方案"
 	NIKKI_UPDATE_CHOICE=update; GEOX_CHOICE=update; ZASH_CHOICE=update
 	RULESET_CHOICE=update
 	set_zashboard_variant dist.zip || return 1
@@ -1871,6 +1986,8 @@ component_only_auto_eligible() {
 }
 
 configure_core_switch_plan() {
+	# 单项内核切换 6-8 是显式强制操作：不比较当前类型和版本。
+	AUTO_UPGRADE_ONLY=0; FORCE_MAINTENANCE=1; FORCE_NIKKI_REINSTALL=0
 	ACTION="$1"
 	case "$ACTION" in smart|alpha|stable) ;; *) return 1 ;; esac
 	CORE_SWITCH_ONLY=1; COMPONENT_ONLY=0; COMPONENT_ONLY_KIND=""
@@ -1891,6 +2008,17 @@ configure_core_switch_plan() {
 configure_component_only_plan() {
 	COMPONENT_ONLY_KIND="$1"
 	case "$COMPONENT_ONLY_KIND" in nikki|geox|zashboard|ruleset) ;; *) return 1 ;; esac
+	# 自动菜单 5、11 是显式强制维护；9、10 才按版本状态自动跳过。
+	case "$COMPONENT_ONLY_KIND" in
+		nikki|ruleset)
+			AUTO_UPGRADE_ONLY=0; FORCE_MAINTENANCE=1
+			;;
+		geox|zashboard)
+			AUTO_UPGRADE_ONLY=1; FORCE_MAINTENANCE=0
+			;;
+	esac
+	if [ "$COMPONENT_ONLY_KIND" = nikki ]; then FORCE_NIKKI_REINSTALL=1
+	else FORCE_NIKKI_REINSTALL=0; fi
 	CORE_SWITCH_ONLY=0; COMPONENT_ONLY=1; ACTION=skip
 	WORKFLOW_MODE="自动维护：仅维护单项组件"
 	NIKKI_UPDATE_CHOICE=skip; GEOX_CHOICE=skip; ZASH_CHOICE=skip
@@ -1958,6 +2086,136 @@ manual_checksum_matches() {
 	command -v sha256sum >/dev/null 2>&1 || return 1
 	mcm_actual="$(sha256sum "$mcm_file" 2>/dev/null | awk '{print $1}')"
 	[ "$mcm_actual" = "$mcm_sha" ]
+}
+
+record_sha_valid() {
+	rsv_sha="$(manual_record_sha "$1")"
+	case "$rsv_sha" in ""|*[!0-9A-Fa-f]*) return 1 ;; esac
+	[ "${#rsv_sha}" -eq 64 ]
+}
+
+model_record_for_choice() {
+	case "$1" in
+		small) printf '%s\n' "${MS_MODEL_SMALL_RECORD:-}" ;;
+		middle) printf '%s\n' "${MS_MODEL_MIDDLE_RECORD:-}" ;;
+		large) printf '%s\n' "${MS_MODEL_LARGE_RECORD:-}" ;;
+		*) return 1 ;;
+	esac
+}
+
+model_matches_any_current_official() {
+	for mmaco_record in "${MS_MODEL_SMALL_RECORD:-}" "${MS_MODEL_MIDDLE_RECORD:-}" "${MS_MODEL_LARGE_RECORD:-}"; do
+		[ -n "$mmaco_record" ] || continue
+		manual_checksum_matches "$MODEL_PATH" "$mmaco_record" && return 0
+	done
+	return 1
+}
+
+model_is_managed_official() {
+	[ -s "$MODEL_PATH" ] || return 1
+	mimo_actual="$(sha256sum "$MODEL_PATH" 2>/dev/null | awk '{print $1}')"
+	[ -n "$mimo_actual" ] || return 1
+	mimo_saved="$(state_get MODEL_SHA256)"
+	if [ -n "$mimo_saved" ]; then [ "$mimo_actual" = "$mimo_saved" ]; return $?; fi
+	# 旧版状态文件尚未记录 SHA 时，只信任能够匹配当前官方资产的模型。
+	model_matches_any_current_official
+}
+
+core_record_for_kind() {
+	case "$1" in
+		smart) printf '%s\n' "${MS_SMART_RECORD:-}" ;;
+		alpha) printf '%s\n' "${MS_ALPHA_RECORD:-}" ;;
+		stable) printf '%s\n' "${MS_STABLE_RECORD:-}" ;;
+		*) return 1 ;;
+	esac
+}
+
+geox_matches_latest_release() {
+	for gml_pair in \
+		"GeoSite.dat|${MS_GEOSITE_RECORD:-}" \
+		"GeoIP.dat|${MS_GEOIP_RECORD:-}" \
+		"Country.mmdb|${MS_MMDB_RECORD:-}" \
+		"ASN.mmdb|${MS_ASN_RECORD:-}"; do
+		gml_file="${gml_pair%%|*}"; gml_record="${gml_pair#*|}"
+		record_sha_valid "$gml_record" || return 2
+		manual_checksum_matches "$RUN_DIR/$gml_file" "$gml_record" || return 1
+	done
+	return 0
+}
+
+apply_auto_upgrade_filters() {
+	[ "$AUTO_UPGRADE_ONLY" -eq 1 ] || return 0
+	AUTO_SKIP_NIKKI=""; AUTO_SKIP_CORE=""; AUTO_SKIP_MODEL=""; AUTO_SKIP_GEOX=""; AUTO_SKIP_ZASH=""
+
+	if [ "$NIKKI_UPDATE_CHOICE" = update ] && pkg_is_installed nikki; then
+		case "${NIKKI_UPDATE_STATE:-unknown}" in
+			latest) NIKKI_UPDATE_CHOICE=skip; AUTO_SKIP_NIKKI=latest ;;
+			unknown) NIKKI_UPDATE_CHOICE=skip; AUTO_SKIP_NIKKI=unknown ;;
+		esac
+	fi
+
+	case "$ACTION" in smart|alpha|stable)
+		if core_is_installed; then
+			auf_core_version="$(core_installed_version)"
+			auf_core_kind="$(core_installed_kind "$auf_core_version")"
+			if [ "$auf_core_kind" = "$ACTION" ]; then
+				# Nikki 默认依赖可能把 Smart/Dev 覆盖成稳定版 mihomo-meta；非默认内核
+				# 必须保留同类型维护步骤，更新前保全、更新后恢复并更新到最新版。
+				if [ "$ACTION" != stable ] && [ "$NIKKI_UPDATE_CHOICE" = update ]; then
+					info "Nikki 本轮存在更新：保留 $(core_kind_label "$ACTION") 内核维护步骤，防止默认依赖覆盖"
+				else
+					auf_core_record="$(core_record_for_kind "$ACTION")"
+					auf_core_token="$(main_core_release_token "$auf_core_record" 2>/dev/null || true)"
+					if [ -z "$auf_core_token" ]; then ACTION=skip; AUTO_SKIP_CORE=unknown
+					else case "$auf_core_version" in *"$auf_core_token"*) ACTION=skip; AUTO_SKIP_CORE=latest ;; esac; fi
+				fi
+			fi
+		fi
+		;;
+	esac
+
+	if [ "$MODEL_MAINTAIN" -eq 1 ]; then
+		auf_model_choice="$LGBM_CHOICE"
+		if [ "$auf_model_choice" = auto ]; then
+			auf_model_choice="$(auto_model_choice 2>/dev/null || true)"
+			[ -z "$auf_model_choice" ] || LGBM_CHOICE="$auf_model_choice"
+		fi
+		if [ -s "$MODEL_PATH" ]; then
+			auf_model_record="$(model_record_for_choice "$auf_model_choice" 2>/dev/null || true)"
+			if [ -n "$auf_model_record" ] && manual_checksum_matches "$MODEL_PATH" "$auf_model_record"; then
+				MODEL_MAINTAIN=0; AUTO_SKIP_MODEL=latest
+			elif ! model_is_managed_official; then
+				MODEL_MAINTAIN=0; AUTO_SKIP_MODEL=protected
+			elif ! record_sha_valid "$auf_model_record"; then
+				MODEL_MAINTAIN=0; AUTO_SKIP_MODEL=unknown
+			fi
+		fi
+	fi
+
+	if [ "$GEOX_CHOICE" = update ] && geox_is_installed; then
+		auf_geox_rc=0
+		geox_matches_latest_release || auf_geox_rc=$?
+		case "$auf_geox_rc" in
+			0) GEOX_CHOICE=skip; AUTO_SKIP_GEOX=latest ;;
+			2) GEOX_CHOICE=skip; AUTO_SKIP_GEOX=unknown ;;
+		esac
+	fi
+
+	if [ "$ZASH_CHOICE" = update ] && zashboard_is_installed; then
+		if [ "${MS_ZASH_TAG:-查询失败}" = "查询失败" ]; then
+			ZASH_CHOICE=skip; AUTO_SKIP_ZASH=unknown
+		else
+			auf_zash_current="$(state_get ZASH_VERSION)"
+			auf_zash_expected="${MS_ZASH_TAG} (${ZASH_VARIANT_LABEL})"
+			if [ "$auf_zash_current" = "$auf_zash_expected" ]; then ZASH_CHOICE=skip; AUTO_SKIP_ZASH=latest; fi
+		fi
+	fi
+}
+
+normalize_filtered_auto_plan() {
+	if [ "$CORE_SWITCH_ONLY" -eq 1 ] && [ "$ACTION" = skip ]; then CORE_SWITCH_ONLY=0; fi
+	# 9/10 即使已最新也保留单项工作流，由单项流程直接报告“已跳过”，
+	# 避免无操作计划绕入完整六步维护流程。
 }
 
 manual_status_scan() {
@@ -2271,7 +2529,8 @@ manual_batch_apply() {
 	CORE_SWITCH_ONLY=0
 	COMPONENT_ONLY=0
 	COMPONENT_ONLY_KIND=""
-	WORKFLOW_MODE="手动维护：按已确认选择执行"
+	WORKFLOW_MODE="手动维护：按已确认选择强制执行"
+	AUTO_UPGRADE_ONLY=0; FORCE_MAINTENANCE=1; FORCE_NIKKI_REINSTALL="$MB_NIKKI"
 	if [ "$MB_NIKKI" -eq 1 ]; then NIKKI_UPDATE_CHOICE=update; else NIKKI_UPDATE_CHOICE=skip; fi
 	if [ "$MB_CORE_SMART" -eq 1 ]; then ACTION=smart
 	elif [ "$MB_CORE_ALPHA" -eq 1 ]; then ACTION=alpha
@@ -2417,25 +2676,29 @@ automatic_maintenance_menu() {
 	while :; do
 		say ""
 		menu_line "================ 自动维护｜预设方案 ================"
-		menu_line "  1）日常更新｜沿用当前组件类型（需已安装 Nikki 和内核）"
+		menu_line "  1）日常更新｜仅升级已有组件，已最新自动跳过（需已安装 Nikki 和内核）"
 		say "${B}${Y}     更新 Nikki、当前类型内核及已安装的模型、GeoX、面板和 rule-set；缺少的可选组件不新装。${N}"
+		say "${B}${Y}     现有 Smart/Dev 等非默认内核会在 Nikki 更新前保全，更新后恢复并更新同类型最新版。${N}"
 		menu_line "  2）完整维护｜Nikki + Smart 内核 + 自动 LGBM + GeoX + Zashboard 完整版"
 		menu_line "  3）完整维护｜Nikki + Dev 内核 + GeoX + Zashboard 完整版"
 		menu_line "  4）完整维护｜Nikki + 稳定版内核 + GeoX + Zashboard 完整版"
-		say "${B}${Y}     2-4 支持首次安装或切换内核；已有 rule-set 同步更新，未配置则跳过。${N}"
+		say "${B}${Y}     2-4 按既定完整方案强制安装/更新；已有 rule-set 同步刷新，未配置则跳过。${N}"
 		say ""
 		say "${B}${M}---------------- 单项维护 ----------------${N}"
-		menu_line "  5）Nikki 主体｜安装、更新或修复主体与依赖"
+		menu_line "  5）Nikki 主体｜强制安装、更新或修复主体与依赖"
 		say "${B}${Y}     保留官方软件源；Nikki 依赖可能安装默认稳定版 mihomo-meta。${N}"
-		menu_line "  6）Smart 内核｜切换内核并自动安装 LightGBM（需已安装 Nikki）"
-		menu_line "  7）Dev 内核｜切换开发预览版并清除 LightGBM（如有）"
-		menu_line "  8）稳定内核｜切换 mihomo-meta 并清除 LightGBM（如有）"
-		menu_line "  9）GeoX 数据｜安装或更新四项数据库"
-		menu_line " 10）Zashboard｜安装或更新完整版 dist.zip"
-		menu_line " 11）规则集｜更新 YAML rule-set provider（如有）"
-		menu_line " 12）返回主菜单"
+		menu_line "  6）Smart 内核｜无条件强制安装/更新 Smart 并维护 LightGBM"
+		menu_line "  7）Dev 内核｜无条件强制安装/更新开发预览版并清除 LightGBM"
+		menu_line "  8）稳定内核｜无条件强制安装/更新 mihomo-meta 并清除 LightGBM"
+		menu_line "  9）GeoX 数据｜安装或更新四项数据库，已最新自动跳过"
+		menu_line " 10）Zashboard｜安装或更新完整版 dist.zip，已最新自动跳过"
+		menu_line " 11）规则集｜强制刷新 YAML rule-set provider（如有）"
+		say ""
+		menu_line " 12）一键重装现有组件｜强制重装已有项目，缺少的不新增"
+		say "${B}${Y}     保持当前内核、模型和面板类型；已有 LightGBM 替换前会持久备份。${N}"
+		menu_line " 13）返回主菜单"
 		menu_line "=================================================="
-		prompt '>>> 请手动选择 [1-12]：'
+		prompt '>>> 请手动选择 [1-13]：'
 		read_user_input || fatal "无法读取自动维护菜单选项"
 		case "$USER_INPUT" in
 			1) existing_auto_eligible "$amm_installed" || continue; AUTO_CHOICE="existing"; return 0 ;;
@@ -2449,7 +2712,8 @@ automatic_maintenance_menu() {
 			9) component_only_auto_eligible "$amm_installed" "GeoX" || continue; AUTO_CHOICE="only-geox"; return 0 ;;
 			10) component_only_auto_eligible "$amm_installed" "Zashboard" || continue; AUTO_CHOICE="only-zashboard"; return 0 ;;
 			11) component_only_auto_eligible "$amm_installed" "rule-set" || continue; AUTO_CHOICE="only-ruleset"; return 0 ;;
-			12) AUTO_CHOICE="return"; return 0 ;;
+			12) existing_auto_eligible "$amm_installed" || continue; AUTO_CHOICE="reinstall-existing"; return 0 ;;
+			13) AUTO_CHOICE="return"; return 0 ;;
 			*) warn "无效选项，请重新输入" ;;
 		esac
 	done
@@ -2670,10 +2934,25 @@ set_all_update_statuses() {
 	RULESET_UPDATE_STATUS="$saus_value"
 }
 
+status_from_auto_skip() {
+	case "$1" in latest|unknown|protected) printf '%s\n' "$1" ;; *) printf '%s\n' user_skipped ;; esac
+}
+
+progress_auto_skip() {
+	pas_component="$1"; pas_reason="$2"; pas_default="$3"
+	case "$pas_reason" in
+		latest) progress_skip "$pas_component 已是最新版本，自动跳过" ;;
+		unknown) progress_skip "$pas_component 远程版本查询失败，自动维护安全跳过" ;;
+		protected) progress_skip "$pas_component 疑似自定义文件，已保护并跳过" ;;
+		*) progress_skip "$pas_default" ;;
+	esac
+}
+
 reset_workflow_state() {
 	TRANSACTION_ACTIVE=0; WAS_RUNNING=0; MAINT_SUCCESS=0
 	CORE_EXISTED=0; MODEL_EXISTED=0; UI_EXISTED=0; CONFIG_EXISTED=0; SUBSCRIPTIONS_EXISTED=0
 	RULESET_UPDATED_COUNT=0; RULESET_TOTAL_COUNT=0
+	NONDEFAULT_CORE_PRESERVED=0; PRESERVED_CORE_KIND=""; SERVICE_RESTART_VERIFIED=0
 	set_all_update_statuses not_selected
 }
 
@@ -2683,7 +2962,10 @@ print_execution_plan() {
 	say "${B}${Y}执行模式：${N}$(paint_current "$WORKFLOW_MODE")"
 	if [ "$NIKKI_UPDATE_CHOICE" = update ]; then say "  ${G}✔${N} Nikki：安装、更新或修复"; else say "  ${Y}－${N} Nikki：跳过"; fi
 	if [ "$ACTION" = skip ]; then
-		if [ "$NIKKI_UPDATE_CHOICE" = update ]; then say "  ${Y}－${N} 内核：未指定，使用 Nikki 默认依赖 $(paint_latest 'mihomo-meta')"
+		if [ "$NIKKI_UPDATE_CHOICE" = update ] && core_is_installed && [ "$(core_installed_kind "$(core_installed_version)")" != stable ]; then
+			pep_existing_kind="$(core_installed_kind "$(core_installed_version)")"
+			say "  ${G}✔${N} 内核：保留现有 $(core_kind_label "$pep_existing_kind")；若被 Nikki 默认依赖覆盖则自动恢复"
+		elif [ "$NIKKI_UPDATE_CHOICE" = update ]; then say "  ${Y}－${N} 内核：未指定，使用 Nikki 默认依赖 $(paint_latest 'mihomo-meta')"
 		else say "  ${Y}－${N} 内核：跳过并保留原有版本"; fi
 	else say "  ${G}✔${N} 内核：$(paint_latest "$pep_core")"; fi
 	if [ "$MODEL_MAINTAIN" -eq 1 ]; then say "  ${G}✔${N} LightGBM：$(paint_latest "$LGBM_CHOICE")"; else say "  ${Y}－${N} LightGBM：跳过"; fi
@@ -2773,6 +3055,7 @@ run_core_switch_workflow() {
 		print_summary
 		return 0
 	fi
+	ensure_nikki_restarted_after_binary_update || { print_summary; return 2; }
 	progress_done "仅内核切换事务完成，正在直接进入当前维护结果"
 	print_summary
 	return 0
@@ -2802,10 +3085,16 @@ run_component_only_workflow() {
 	set_component_only_default_statuses
 	print_component_only_plan
 	case "$COMPONENT_ONLY_KIND" in
-		nikki)
+			nikki)
 			NIKKI_UPDATE_STATUS="not_selected"
 			flow_title "仅安装、更新或修复 Nikki"
 			select_downloader
+			if ! preserve_nondefault_core_before_nikki; then
+				NIKKI_UPDATE_STATUS="skipped"
+				err "无法保全当前非默认内核，已取消 Nikki 单项维护"
+				print_summary
+				return 0
+			fi
 			if install_or_update_nikki; then
 				NIKKI_UPDATE_STATUS="updated"
 			else
@@ -2814,11 +3103,29 @@ run_component_only_workflow() {
 				print_summary
 				return 0
 			fi
+			if ! restore_nondefault_core_after_nikki; then
+				err "Nikki 更新后无法恢复保全的非默认内核；保全副本仍位于 $NONDEFAULT_CORE_BEFORE_NIKKI"
+				print_summary
+				return 2
+			fi
+			ensure_nikki_restarted_after_binary_update || { print_summary; return 2; }
 			progress_done "Nikki 单项维护完成，正在直接进入当前维护结果"
 			;;
 		geox|zashboard)
 			[ "$COMPONENT_ONLY_KIND" != geox ] || GEOX_UPDATE_STATUS="not_selected"
 			[ "$COMPONENT_ONLY_KIND" != zashboard ] || ZASH_UPDATE_STATUS="not_selected"
+			if [ "$COMPONENT_ONLY_KIND" = geox ] && [ "$GEOX_CHOICE" != update ]; then
+				GEOX_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_GEOX")"
+				progress_auto_skip "GeoX" "$AUTO_SKIP_GEOX" "已按计划跳过 GeoX，保留当前数据库"
+				print_summary
+				return 0
+			fi
+			if [ "$COMPONENT_ONLY_KIND" = zashboard ] && [ "$ZASH_CHOICE" != update ]; then
+				ZASH_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_ZASH")"
+				progress_auto_skip "Zashboard" "$AUTO_SKIP_ZASH" "已按计划跳过 Zashboard，保留当前面板"
+				print_summary
+				return 0
+			fi
 			flow_title "仅组件维护事务"
 			progress_line "1/3" "检查并补齐下载、解压和校验工具"
 			if ! ensure_update_tools; then
@@ -2893,6 +3200,12 @@ run_update_workflow() {
 	flow_title "步骤 1/6：Nikki 插件主体及依赖"
 	if [ "$NIKKI_UPDATE_CHOICE" = update ]; then
 		select_downloader
+		if ! preserve_nondefault_core_before_nikki; then
+			NIKKI_UPDATE_STATUS="skipped"
+			err "无法保全当前非默认内核，为避免 Nikki 更新后无法恢复，已取消本轮主体更新"
+			print_summary
+			return 2
+		fi
 		if ! install_or_update_nikki; then
 			NIKKI_UPDATE_STATUS="skipped"
 			warn "Nikki 安装/更新失败，已执行回滚；请检查网络后从主菜单重试"
@@ -2900,12 +3213,18 @@ run_update_workflow() {
 			return 2
 		fi
 		NIKKI_UPDATE_STATUS="updated"
+		if ! restore_nondefault_core_after_nikki; then
+			err "Nikki 更新后无法恢复保全的非默认内核；保全副本仍位于 $NONDEFAULT_CORE_BEFORE_NIKKI"
+			print_summary
+			return 2
+		fi
 	else
-		NIKKI_UPDATE_STATUS="user_skipped"
-		progress_skip "已按选择跳过 Nikki 及其依赖更新，当前安装保持不变"
+		NIKKI_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_NIKKI")"
+		progress_auto_skip "Nikki" "$AUTO_SKIP_NIKKI" "已按选择跳过 Nikki 及其依赖更新，当前安装保持不变"
 	fi
 	case "$ACTION" in smart|alpha|stable|skip) ;; *) fatal "维护计划缺少有效内核动作" ;; esac
 	run_maintenance "$ACTION"
+	ensure_nikki_restarted_after_binary_update || { print_summary; return 2; }
 	print_summary
 	return 0
 }
@@ -2916,6 +3235,8 @@ reset_menu_plan() {
 	GEOX_CHOICE=update; ZASH_CHOICE=update; ZASH_ASSET=dist.zip; ZASH_VARIANT_LABEL=full
 	RULESET_CHOICE=skip
 	CORE_SWITCH_ONLY=0; COMPONENT_ONLY=0; COMPONENT_ONLY_KIND=""; WORKFLOW_MODE="交互维护"
+	AUTO_UPGRADE_ONLY=0; FORCE_MAINTENANCE=0; FORCE_NIKKI_REINSTALL=0
+	AUTO_SKIP_NIKKI=""; AUTO_SKIP_CORE=""; AUTO_SKIP_MODEL=""; AUTO_SKIP_GEOX=""; AUTO_SKIP_ZASH=""
 }
 
 main() {
@@ -2930,6 +3251,7 @@ main() {
 
 	# 命令行模式保持适合自动化的单次执行语义。
 	if [ -n "$CLI_ACTION" ]; then
+		FORCE_MAINTENANCE=1
 		if [ "$CLI_ACTION" = "uninstall" ]; then
 			uninstall_nikki || exit 1
 		else
@@ -2959,6 +3281,7 @@ main() {
 			[ "$AUTO_CHOICE" != return ] || continue
 			case "$AUTO_CHOICE" in
 				existing) configure_existing_auto_plan || { warn "无法建立现有组件更新计划，返回自动维护菜单"; continue; } ;;
+				reinstall-existing) configure_existing_reinstall_plan || { warn "无法建立现有组件重装计划，返回自动维护菜单"; continue; } ;;
 				only-nikki) configure_component_only_plan nikki || { warn "无法建立 Nikki 单项维护计划"; continue; } ;;
 				core-smart) configure_core_switch_plan smart || { warn "无法建立 Smart 内核切换计划"; continue; } ;;
 				core-alpha) configure_core_switch_plan alpha || { warn "无法建立 Dev 内核切换计划"; continue; } ;;
@@ -2968,6 +3291,8 @@ main() {
 				only-ruleset) configure_component_only_plan ruleset || { warn "无法建立 rule-set 单项维护计划"; continue; } ;;
 				*) configure_full_auto_plan "$AUTO_CHOICE" || { warn "无法建立完整自动维护计划，返回自动维护菜单"; continue; } ;;
 			esac
+			apply_auto_upgrade_filters
+			normalize_filtered_auto_plan
 			if [ "$CORE_SWITCH_ONLY" -eq 1 ]; then info "前置环境检查已通过；将仅切换内核并处理 LightGBM，随后直接显示当前维护结果"
 			elif [ "$COMPONENT_ONLY" -eq 1 ]; then info "前置环境检查已通过；将仅维护已选择的单项组件，随后直接显示当前维护结果"
 			else info "前置环境检查已通过；将自动执行 Nikki、组件及已有 YAML 关联资源维护，无需再次人工选择"; fi
