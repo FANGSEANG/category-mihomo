@@ -14,12 +14,12 @@
 DOMAIN-SUFFIX,immortalwrt.org
 #DOMAIN-SUFFIX,kyarucloud.moe
 
-# Cloudflare Tunnel
-DOMAIN-SUFFIX,argotunnel.com
-DOMAIN-SUFFIX,cftunnel.com
-IP-CIDR,198.41.192.0/24,no-resolve
-IP-CIDR,198.41.200.0/24,no-resolve
-DST-PORT,7844
+# Cloudflare Tunnel （已经迁移到NAT_Penetration.list中，此处注释掉）
+#DOMAIN-SUFFIX,argotunnel.com
+#DOMAIN-SUFFIX,cftunnel.com
+#IP-CIDR,198.41.192.0/24,no-resolve
+#IP-CIDR,198.41.200.0/24,no-resolve
+#DST-PORT,7844
 
 # GitHub 反代 CDN
 DOMAIN-SUFFIX,gh-proxy.com
@@ -402,12 +402,12 @@ DOMAIN,setmeup.arubanetworks.com
 DOMAIN,www.asusrouter.com
 IP-CIDR,0.0.0.0/8,no-resolve
 IP-CIDR,10.0.0.0/8,no-resolve
-IP-CIDR,100.64.0.0/10,no-resolve
+#IP-CIDR,100.64.0.0/10,no-resolve #在NAT_Penetration.list也有，此处注释掉
 IP-CIDR,127.0.0.0/8,no-resolve
 #IP-CIDR,17.0.0.0/8,no-resolve #会强制苹果推送直连，暂时注释掉
 IP-CIDR,172.16.0.0/12,no-resolve
 IP-CIDR,192.168.0.0/16,no-resolve
-IP-CIDR,198.18.0.0/16,no-resolve
+#IP-CIDR,198.18.0.0/16,no-resolve
 IP-CIDR,224.0.0.0/4,no-resolve
 IP-CIDR,::1/128,no-resolve
 IP-CIDR,fc00::/7,no-resolve
