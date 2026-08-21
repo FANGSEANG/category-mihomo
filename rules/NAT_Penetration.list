@@ -7,9 +7,9 @@
 # 进程
 PROCESS-NAME,tailscaled
 
-# DERP Servers中继服务器
-DOMAIN-REGEX,^derp\d*-?.*\.tailscale\.com$
-DOMAIN-REGEX,^derp.*tailscale\.com
+# DERP Servers中继服务器，如果启用DOMAIN-SUFFIX,tailscale.com，下面两个可以不开
+#DOMAIN-REGEX,^derp\d*-?.*\.tailscale\.com$
+#DOMAIN-REGEX,^derp.*tailscale\.com
 
 # 其他域名
 DOMAIN-SUFFIX,tailscale.io
@@ -24,9 +24,9 @@ IP-CIDR,fd7a:115c:a1e0::/48,no-resolve
 AND,((NETWORK,UDP),(DST-PORT,41641))
 AND,((NETWORK,UDP),(SRC-PORT,41641))
 
-# peer relays端口
-DST-PORT,40000
-SRC-PORT,40000
+# peer relays端口（仅UDP）
+AND,((NETWORK,UDP),(DST-PORT,40000))
+AND,((NETWORK,UDP),(SRC-PORT,40000))
 
 #-------------------------
 # Zerotier相关
