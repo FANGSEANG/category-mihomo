@@ -1,4 +1,5 @@
-#LAN / 私有域
+# LAN / 私有域
+*
 localhost
 *.lan
 *.localdomain
@@ -13,7 +14,15 @@ PDC._msDCS.*.*
 DC._msDCS.*.*
 GC._msDCS.*.*
 *.router.asus.com
-#NTP
+
+# 系统连通性检测
+captive.apple.com
+
+# 反向解析
++.in-addr.arpa
++.ip6.arpa
+
+# NTP
 time1.cloud.tencent.com
 time.*.edu.cn
 *.time.edu.cn
@@ -33,7 +42,8 @@ ntp3.tencent.com
 ntp4.tencent.com
 ntp5.tencent.com
 cn.pool.ntp.org
-#运营商一键登录
+
+# 运营商一键登录
 id6.me
 open.e.189.cn
 hmrz.wo.cn
@@ -41,43 +51,68 @@ nishub1.10010.com
 enrichgw.10010.com
 *.cmpassport.com
 *.wosms.cn
-#金融/生活
+
+# 金融 / 生活
 app.yinxiang.com
 +.cmbchina.com
 +.cmbimg.com
+
+# 境外银行 / 金融 / 支付（业务流量必须 DIRECT，DNS 使用国内直连 DoH）
++.kasikornbank.com
++.hsbc.com.hk
++.hsbc.com
++.sc.com
++.citibank.com
++.citi.com
++.visa.com
++.mastercard.com
++.boc.com.hk
++.bochk.com
++.boc.hk
 *.pingan.com.cn
 *.10099.com.cn
 *.microdone.cn
 *.jegotrip.com.cn
-#QQ/微信登录
+
+# QQ / 微信登录
 localhost.ptlogin2.qq.com
 localhost.sec.qq.com
 localhost.*.weixin.qq.com
-#网易云音乐
+
+# 网易云音乐
 music.163.com
 *.music.163.com
 *.126.net
-#百度音乐
+
+# 百度音乐
 music.taihe.com
-#酷狗音乐
+musicapi.taihe.com
+
+# 酷狗音乐
 songsearch.kugou.com
 trackercdn.kugou.com
-#酷我音乐
+
+# 酷我音乐
 *.kuwo.cn
-#QQ音乐
+
+# QQ音乐
 y.qq.com
 streamoc.music.tc.qq.com
 mobileoc.music.tc.qq.com
 isure.stream.qqmusic.qq.com
 dl.stream.qqmusic.qq.com
 aqqmusic.tc.qq.com
+amobile.music.tc.qq.com
 *.y.qq.com
-#虾米音乐
+
+# 虾米音乐
 *.xiami.com
-#咪咕音乐
+
+# 咪咕音乐
 music.migu.cn
 *.music.migu.cn
-#游戏国服
+
+# 游戏国服
 ff.dorado.sdo.com
 +.battlenet.com.cn
 +.wotgame.cn
@@ -87,31 +122,49 @@ ff.dorado.sdo.com
 +.gcloudsdk.com
 *.blzstatic.cn
 *.ff14.sdo.com
-#Apple 软件更新（国内 CDN）
+
+# Apple 软件更新（国内 CDN）
 mesu.apple.com
 swscan.apple.com
+swquery.apple.com
 swdownload.apple.com
 swcdn.apple.com
 swdist.apple.com
-#Bilibili
+
+# Bilibili
 *.mcdn.bilivideo.cn
-#迅雷
+
+# 迅雷
 +.sandai.net
 +.n0808.com
-#UU 加速器
+
+# UU 加速器
 ps.res.netease.com
 +.uu.163.com
-#小米
+
+# 小米
 +.market.xiaomi.com
-#花生壳
+
+# 花生壳
 +.oray.com
 +.orayimg.com
-#STUN 国内
+
+# 国内广告规则服务
+adrules.top
+anti-ad.net
+static.adtidy.org
+
+# 工业 / 中国站点
++.cn.element14.com
+
+# STUN 国内
 +.stun.*.cn
 +.stun.*.*.cn
 +.stun.*.*.*.cn
 +.stun.*.*.*.*.cn
 stun.*.cn
 stun.*.*.cn
-#Steam 国内 CDN
+
+# Steam 国内 CDN
 alibaba.cdn.steampipe.steamcontent.com
+
