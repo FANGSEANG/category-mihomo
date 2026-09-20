@@ -1,4 +1,4 @@
-#连通性探测 / 工具
+# 连通性探测 / 工具
 cable.auth.com
 network-test.debian.org
 detectportal.firefox.com
@@ -9,7 +9,11 @@ injections.adguard.org
 local.adguard.org
 proxy.golang.org
 shark007.net
-#NTP
+
+# VPN / NAT / ZeroTier
++.zerotier.com
+
+# NTP
 time-ios.apple.com
 +.pool.ntp.org
 time.*.com
@@ -30,51 +34,77 @@ ntp4.*.com
 ntp5.*.com
 ntp6.*.com
 ntp7.*.com
-#STUN
+
+# STUN
 +.stun.*.*
 +.stun.*.*.*
 +.stun.*.*.*.*
 +.stun.*.*.*.*.*
++.stun.*
 stun.*.*
 stun.*.*.*
-#JOOX 音乐
+
+# JOOX 音乐
 api-jooxtt.sanook.com
 api.joox.com
 joox.com
-#Win10 本地连接检测
+
+# Win10 本地连接检测
 +.msftconnecttest.com
 +.msftncsi.com
-#Nintendo Switch
+
+# Nintendo Switch
 +.srv.nintendo.net
 +.cdn.nintendo.net
 *.n.n.srv.nintendo.net
-#Sony PlayStation
+
+# Sony PlayStation
 +.stun.playstation.net
-#Microsoft Xbox
+
+# Microsoft Xbox
 xnotify.xboxlive.com
 xbox.*.*.microsoft.com
 *.*.xboxlive.com
 xbox.*.microsoft.com
-#Wotgame
+
+# Wotgame
 +.battle.net
 +.wargaming.net
-#Steam
+
+# Steam
 +.steamcontent.com
-#FinalFantasy XIV 国际服
+
+# Final Fantasy XIV 国际服
 *.square-enix.com
 *.finalfantasyxiv.com
 *.ffxiv.com
-#Linksys Router
+
+# Linksys Router
 heartbeat.belkin.com
 *.linksys.com
 *.linksyssmartwifi.com
-#Google
+
+# Google
 lens.l.google.com
 stun.l.google.com
 na.b.g-tun.com
-#Netflix
+
+# Netflix
 +.nflxvideo.net
-#Disney Plus
+
+# Disney Plus
 +.media.dssott.com
-#Wifi Calling
-+.pub.3gppnetwork.org
+
+# Wi-Fi Calling
++.3gppnetwork.org
+
+# AdGuard / 广告规则服务
+adguardteam.github.io
+
+# DDNS
++.dynv6.net
+
+# 其他兼容性例外
++.kk-rays.com
++.oilrite.com
+
