@@ -13,6 +13,10 @@ shark007.net
 # VPN / NAT / ZeroTier
 +.zerotier.com
 
+# Docker
++.docker.io
+docker.io
+
 # NTP
 time-ios.apple.com
 +.pool.ntp.org
