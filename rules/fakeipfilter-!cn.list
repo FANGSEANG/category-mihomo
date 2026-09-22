@@ -14,8 +14,13 @@ shark007.net
 +.zerotier.com
 
 # Docker
-+.docker.io
 docker.io
+*.docker.io
++.docker.io
+registry-1.docker.io
+auth.docker.io
+production.cloudflare.docker.com
++.r2.cloudflarestorage.com
 
 # NTP
 time-ios.apple.com
