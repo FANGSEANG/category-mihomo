@@ -23,19 +23,20 @@
 
 set -u
 
-SCRIPT_VERSION="3.7.0-opt7"
+SCRIPT_VERSION="3.7.0-opt8"
 ACTION=""; CLI_ACTION=""; MAIN_CHOICE=""; WORKFLOW_MODE="命令行维护"
 ENVIRONMENT_READY=0; PKG_INDEX_READY=0; NIKKI_FEED_READY=0; NIKKI_FEED_ATTEMPTED=0; STATUS_SCAN_READY=0
 NIKKI_FEED_ORIGINAL_ANY=0; NIKKI_FEED_ADDED_SESSION=0; NIKKI_FEED_EXIT_PROMPTED=0
 NIKKI_UPDATE_CHOICE="update"; LGBM_CHOICE="auto"; LGBM_SET=0
 NIKKI_MAIN_STATE="unknown"; NIKKI_LUCI_STATE="unknown"; NIKKI_LANG_STATE="unknown"
 NIKKI_MAIN_AVAILABLE=""; NIKKI_LUCI_AVAILABLE=""; NIKKI_LANG_AVAILABLE=""
+NIKKI_MAIN_UPDATE_STATUS=not_selected; NIKKI_LUCI_UPDATE_STATUS=not_selected; NIKKI_LANG_UPDATE_STATUS=not_selected
 GEOX_CHOICE="update"; ZASH_CHOICE="update"; ZASH_ASSET="dist.zip"; ZASH_VARIANT_LABEL="full"
 RULESET_CHOICE="skip"; MODEL_MAINTAIN=0
 CORE_SWITCH_ONLY=0; COMPONENT_ONLY=0; COMPONENT_ONLY_KIND=""; ASSUME_YES=0
 AUTO_UPGRADE_ONLY=0; FORCE_MAINTENANCE=0; FORCE_NIKKI_REINSTALL=0
 AUTO_SKIP_NIKKI=""; AUTO_SKIP_CORE=""; AUTO_SKIP_MODEL=""; AUTO_SKIP_GEOX=""; AUTO_SKIP_ZASH=""
-NONDEFAULT_CORE_PRESERVED=0; PRESERVED_CORE_KIND=""; SERVICE_RESTART_VERIFIED=0; NIKKI_MAIN_MAINTAINED=0
+NONDEFAULT_CORE_PRESERVED=0; PRESERVED_CORE_KIND=""; SERVICE_RESTART_VERIFIED=0; NIKKI_MAIN_MAINTAINED=0; NIKKI_FIRST_INSTALL=0
 DETAIL_OUTPUT="${NIKKI_DETAIL:-0}"
 DOWNLOAD_FAILURES=0
 KEEP_BACKUP_ON_SUCCESS="${KEEP_BACKUP_ON_SUCCESS:-0}"; MIPS_FLOAT="${MIPS_FLOAT:-auto}"
@@ -662,6 +663,11 @@ aggregate_nikki_package_state() {
 }
 
 nikki_package_update_plan() {
+	# 首次安装以 Nikki 套件为单位，三个必需包统一安装到仓库最新版本。
+	if [ "$NIKKI_FIRST_INSTALL" -eq 1 ]; then
+		printf '%s\n' 'nikki luci-app-nikki luci-i18n-nikki-zh-cn'
+		return 0
+	fi
 	if [ "$FORCE_NIKKI_REINSTALL" -eq 1 ]; then
 		printf '%s\n' 'nikki luci-app-nikki luci-i18n-nikki-zh-cn'
 		return 0
@@ -671,6 +677,27 @@ nikki_package_update_plan() {
 	case "$NIKKI_LUCI_STATE" in update|missing) npup_list="$npup_list luci-app-nikki" ;; esac
 	case "$NIKKI_LANG_STATE" in update|missing) npup_list="$npup_list luci-i18n-nikki-zh-cn" ;; esac
 	printf '%s\n' "${npup_list# }"
+}
+
+nikki_package_result_status() {
+	nprs_pkg="$1"; nprs_state="$2"; nprs_plan="$3"; nprs_selected="$4"
+	case " $nprs_plan " in
+		*" $nprs_pkg "*) printf '%s\n' "$nprs_selected"; return 0 ;;
+	esac
+	case "$nprs_state" in
+		latest) printf '%s\n' latest ;;
+		unknown) printf '%s\n' unknown ;;
+		missing) printf '%s\n' not_present ;;
+		update) printf '%s\n' user_skipped ;;
+		*) printf '%s\n' not_selected ;;
+	esac
+}
+
+set_nikki_package_result_statuses() {
+	snprs_plan="$1"; snprs_selected="$2"
+	NIKKI_MAIN_UPDATE_STATUS="$(nikki_package_result_status nikki "$NIKKI_MAIN_STATE" "$snprs_plan" "$snprs_selected")"
+	NIKKI_LUCI_UPDATE_STATUS="$(nikki_package_result_status luci-app-nikki "$NIKKI_LUCI_STATE" "$snprs_plan" "$snprs_selected")"
+	NIKKI_LANG_UPDATE_STATUS="$(nikki_package_result_status luci-i18n-nikki-zh-cn "$NIKKI_LANG_STATE" "$snprs_plan" "$snprs_selected")"
 }
 
 nikki_plan_includes_main() {
@@ -894,6 +921,7 @@ install_packages_from_feed() {
 	NIKKI_MAIN_MAINTAINED=0
 	ipf_refresh="${1:-1}"
 	ipf_before="$(nikki_version 2>/dev/null || true)"
+	[ -n "$ipf_before" ] || NIKKI_FIRST_INSTALL=1
 	if [ "$ipf_refresh" != "0" ]; then
 		pkg_update_once || return 1
 	fi
@@ -908,7 +936,13 @@ install_packages_from_feed() {
 		aggregate_nikki_package_state
 	fi
 	ipf_packages="$(nikki_package_update_plan)"
-	[ -n "$ipf_packages" ] || { progress_skip "Nikki 三个软件包均已最新，无需执行软件包命令"; return 0; }
+	if [ -z "$ipf_packages" ]; then
+		set_nikki_package_result_statuses "" latest
+		progress_skip "Nikki 三个软件包均已最新，无需执行软件包命令"
+		return 0
+	fi
+	# 先按失败状态登记目标包；只有软件包命令完整成功后才改为已更新，避免汇总误报。
+	set_nikki_package_result_statuses "$ipf_packages" skipped
 	case " $ipf_packages " in *" nikki "*) NIKKI_MAIN_MAINTAINED=1 ;; esac
 	case "$PKG_MANAGER" in
 		opkg)
@@ -944,12 +978,14 @@ install_packages_from_feed() {
 			;;
 		*) return 1 ;;
 	esac
+	set_nikki_package_result_statuses "$ipf_packages" updated
 	ok "本轮软件包处理：$ipf_packages"
 	report_nikki_package_result "$ipf_before"
 }
 
 install_or_update_nikki() {
 	NIKKI_MAIN_MAINTAINED=0
+	if pkg_is_installed nikki; then NIKKI_FIRST_INSTALL=0; else NIKKI_FIRST_INSTALL=1; fi
 	say "${B}${C}  ┌─ Nikki 安装/更新明细${N}"
 	progress_line "1/4" "建立软件包、配置、软件源和现有内核备份"
 	backup_install_state || { err "无法建立安装前备份（可能存储空间不足）"; return 1; }
@@ -979,6 +1015,8 @@ install_or_update_nikki() {
 		install_url="https://raw.githubusercontent.com/${NIKKI_REPO}/refs/heads/main/install.sh"
 		io_before="$(nikki_version 2>/dev/null || true)"
 		io_b_ok=1
+		io_b_packages='nikki luci-app-nikki luci-i18n-nikki-zh-cn'
+		set_nikki_package_result_statuses "$io_b_packages" skipped
 		fetch_url "$install_url" "$install_script" script || io_b_ok=0
 		[ "$io_b_ok" -ne 1 ] || grep -q "Nikki's installer" "$install_script" || io_b_ok=0
 		if [ "$io_b_ok" -eq 1 ]; then
@@ -999,7 +1037,11 @@ install_or_update_nikki() {
 				*) io_b_ok=0 ;;
 			esac
 		fi
-		[ "$io_b_ok" -ne 1 ] || report_nikki_package_result "$io_before" || io_b_ok=0
+		if [ "$io_b_ok" -eq 1 ]; then
+			NIKKI_MAIN_MAINTAINED=1
+			set_nikki_package_result_statuses "$io_b_packages" updated
+			report_nikki_package_result "$io_before" || io_b_ok=0
+		fi
 		if [ "$io_b_ok" -ne 1 ]; then
 			restore_install_state
 			err "方案 A、B 均失败；已尽可能恢复配置、内核和本次新增包"
@@ -1756,9 +1798,31 @@ summary_status() {
 	esac
 }
 
+nikki_package_summary_status() {
+	npss_status="$1"
+	case "$npss_status" in
+		updated)
+			if [ "$NIKKI_FIRST_INSTALL" -eq 1 ]; then printf '%b' "${B}${G}本次已安装仓库最新版本${N}"
+			elif [ "$FORCE_NIKKI_REINSTALL" -eq 1 ]; then printf '%b' "${B}${G}本次已强制维护${N}"
+			else printf '%b' "${B}${G}本次已更新或补齐${N}"; fi
+			;;
+		latest) printf '%s' "$ps_latest" ;;
+		skipped)
+			if [ "$NIKKI_FIRST_INSTALL" -eq 1 ]; then printf '%b' "${B}${R}首次安装失败，已回滚本次变更${N}"
+			else printf '%s' "$ps_failed"; fi
+			;;
+		user_skipped) printf '%s' "$ps_user_skipped" ;;
+		unknown) printf '%b' "${B}${Y}远程版本未知，已安全跳过${N}" ;;
+		not_present) printf '%b' "${B}${R}未安装${N}" ;;
+		*) return 0 ;;
+	esac
+}
+
 print_summary() {
 	[ "$RULESET_TOTAL_COUNT" -gt 0 ] || RULESET_TOTAL_COUNT="$(ruleset_provider_count)"
-	ps_nikki="$(nikki_version)"; [ -n "$ps_nikki" ] || ps_nikki="unknown"
+	ps_nikki="$(nikki_package_version nikki 2>/dev/null || true)"; [ -n "$ps_nikki" ] || ps_nikki="未安装"
+	ps_nikki_luci="$(nikki_package_version luci-app-nikki 2>/dev/null || true)"; [ -n "$ps_nikki_luci" ] || ps_nikki_luci="未安装"
+	ps_nikki_lang="$(nikki_package_version luci-i18n-nikki-zh-cn 2>/dev/null || true)"; [ -n "$ps_nikki_lang" ] || ps_nikki_lang="未安装"
 	ps_core="$("$CORE_PATH" -v 2>/dev/null | head -n 1 || true)"; [ -n "$ps_core" ] || ps_core="unknown"
 	ps_kind="$(state_get CORE_KIND)"; ps_model="$(state_get MODEL)"; ps_geox="$(state_get GEOX_DATE)"; ps_zash="$(state_get ZASH_VERSION)"
 	case "$ps_core" in *alpha-smart*) ps_kind=smart ;; *alpha*) ps_kind=alpha ;; unknown) ;; *) ps_kind=stable ;; esac
@@ -1770,8 +1834,12 @@ print_summary() {
 	ps_failed="${B}${R}本次更新失败，已保留原版本${N}"
 	ps_user_skipped="${B}${Y}已按选择跳过，保留当前版本${N}"
 	ps_nikki_default_core="${B}${G}未指定额外内核，采用 Nikki 默认依赖 mihomo-meta${N}"
-	ps_nikki_result="$(summary_status "$NIKKI_UPDATE_STATUS")"
-	summary_item "当前 Nikki" "$ps_nikki" "$ps_nikki_result"
+	ps_nikki_main_result="$(nikki_package_summary_status "$NIKKI_MAIN_UPDATE_STATUS")"
+	ps_nikki_luci_result="$(nikki_package_summary_status "$NIKKI_LUCI_UPDATE_STATUS")"
+	ps_nikki_lang_result="$(nikki_package_summary_status "$NIKKI_LANG_UPDATE_STATUS")"
+	summary_item "当前 Nikki 主体" "$ps_nikki" "$ps_nikki_main_result"
+	summary_item "当前 Nikki LuCI" "$ps_nikki_luci" "$ps_nikki_luci_result"
+	summary_item "当前 Nikki 简体中文包" "$ps_nikki_lang" "$ps_nikki_lang_result"
 	case "$CORE_UPDATE_STATUS" in
 		updated|latest) ps_core_result="$ps_latest" ;;
 		restored) ps_core_result="${B}${G}Nikki 更新后已恢复原非默认内核并生效${N}" ;;
@@ -2411,8 +2479,19 @@ print_nikki_package_status() {
 	fi
 }
 
+print_nikki_maintenance_status() {
+	if pkg_is_installed nikki; then
+		print_nikki_package_status "Nikki 主体" nikki "$NIKKI_MAIN_STATE" "$NIKKI_MAIN_AVAILABLE"
+		print_nikki_package_status "Nikki LuCI" luci-app-nikki "$NIKKI_LUCI_STATE" "$NIKKI_LUCI_AVAILABLE"
+		print_nikki_package_status "Nikki 简体中文包" luci-i18n-nikki-zh-cn "$NIKKI_LANG_STATE" "$NIKKI_LANG_AVAILABLE"
+	else
+		say "${B}${Y}Nikki 套件：${N}$(paint_missing '未安装')；首次安装将统一安装主体、LuCI 和简体中文包的仓库最新版本"
+	fi
+}
+
 print_main_status_overview() {
 	flow_title "当前组件状态"
+	# 启动后的版本校验始终逐包展示；“Nikki 套件”仅用于未安装时的安装选择和执行计划。
 	print_nikki_package_status "Nikki 主体" nikki "$NIKKI_MAIN_STATE" "$NIKKI_MAIN_AVAILABLE"
 	print_nikki_package_status "Nikki LuCI" luci-app-nikki "$NIKKI_LUCI_STATE" "$NIKKI_LUCI_AVAILABLE"
 	print_nikki_package_status "Nikki 简体中文包" luci-i18n-nikki-zh-cn "$NIKKI_LANG_STATE" "$NIKKI_LANG_AVAILABLE"
@@ -2486,10 +2565,12 @@ manual_model_status() {
 manual_batch_render() {
 	say ""
 	menu_line "================ 手动维护｜一次选完，统一执行 ================"
-	print_nikki_package_status "Nikki 主体" nikki "$NIKKI_MAIN_STATE" "$NIKKI_MAIN_AVAILABLE"
-	print_nikki_package_status "Nikki LuCI" luci-app-nikki "$NIKKI_LUCI_STATE" "$NIKKI_LUCI_AVAILABLE"
-	print_nikki_package_status "Nikki 简体中文包" luci-i18n-nikki-zh-cn "$NIKKI_LANG_STATE" "$NIKKI_LANG_AVAILABLE"
-	manual_option "$MB_NIKKI" "1）维护 Nikki 主体与必需依赖"
+	print_nikki_maintenance_status
+	if pkg_is_installed nikki; then
+		manual_option "$MB_NIKKI" "1）更新/维护 Nikki（分别检查主体、LuCI、简体中文包）"
+	else
+		manual_option "$MB_NIKKI" "1）首次安装 Nikki 套件（主体 + LuCI + 简体中文包）"
+	fi
 	say ""
 	if core_is_installed; then
 		mbr_cv="$(core_installed_version)"; mbr_ck="$(core_kind_label "$(core_installed_kind "$mbr_cv")")"
@@ -3034,6 +3115,7 @@ uninstall_nikki() {
 set_all_update_statuses() {
 	saus_value="$1"
 	NIKKI_UPDATE_STATUS="$saus_value"; CORE_UPDATE_STATUS="$saus_value"; MODEL_UPDATE_STATUS="$saus_value"
+	NIKKI_MAIN_UPDATE_STATUS="$saus_value"; NIKKI_LUCI_UPDATE_STATUS="$saus_value"; NIKKI_LANG_UPDATE_STATUS="$saus_value"
 	GEOX_UPDATE_STATUS="$saus_value"; ZASH_UPDATE_STATUS="$saus_value"
 	RULESET_UPDATE_STATUS="$saus_value"
 }
@@ -3056,7 +3138,7 @@ reset_workflow_state() {
 	TRANSACTION_ACTIVE=0; WAS_RUNNING=0; MAINT_SUCCESS=0
 	CORE_EXISTED=0; MODEL_EXISTED=0; UI_EXISTED=0; CONFIG_EXISTED=0; SUBSCRIPTIONS_EXISTED=0
 	RULESET_UPDATED_COUNT=0; RULESET_TOTAL_COUNT=0
-	NONDEFAULT_CORE_PRESERVED=0; PRESERVED_CORE_KIND=""; SERVICE_RESTART_VERIFIED=0; NIKKI_MAIN_MAINTAINED=0
+	NONDEFAULT_CORE_PRESERVED=0; PRESERVED_CORE_KIND=""; SERVICE_RESTART_VERIFIED=0; NIKKI_MAIN_MAINTAINED=0; NIKKI_FIRST_INSTALL=0
 	set_all_update_statuses not_selected
 }
 
@@ -3064,7 +3146,8 @@ print_execution_plan() {
 	case "$ACTION" in smart) pep_core="Smart" ;; alpha) pep_core="Dev 开发预览版" ;; stable) pep_core="稳定版" ;; skip) pep_core="跳过" ;; *) pep_core="未知" ;; esac
 	flow_title "本轮维护执行计划"
 	say "${B}${Y}执行模式：${N}$(paint_current "$WORKFLOW_MODE")"
-	if [ "$NIKKI_UPDATE_CHOICE" = update ] && nikki_plan_includes_main; then say "  ${G}✔${N} Nikki 主体：安装、更新或修复"
+	if [ "$NIKKI_UPDATE_CHOICE" = update ] && [ "$NIKKI_FIRST_INSTALL" -eq 1 ]; then say "  ${G}✔${N} Nikki 套件：首次统一安装主体、LuCI 和简体中文包的仓库最新版本"
+	elif [ "$NIKKI_UPDATE_CHOICE" = update ] && nikki_plan_includes_main; then say "  ${G}✔${N} Nikki 更新维护：分别检查并维护主体、LuCI 和简体中文包"
 	elif [ "$NIKKI_UPDATE_CHOICE" = update ]; then say "  ${G}✔${N} Nikki 伴随包：仅更新有新版或缺失的 LuCI/中文语言包"
 	else say "  ${Y}－${N} Nikki：跳过"; fi
 	if [ "$ACTION" = skip ]; then
@@ -3169,7 +3252,10 @@ run_core_switch_workflow() {
 
 print_component_only_plan() {
 	case "$COMPONENT_ONLY_KIND" in
-		nikki) pcop_label="Nikki 主体及必需依赖" ;;
+		nikki)
+			if [ "$NIKKI_FIRST_INSTALL" -eq 1 ]; then pcop_label="首次安装 Nikki 套件（主体 + LuCI + 简体中文包）"
+			else pcop_label="Nikki 更新维护（分别检查主体、LuCI、简体中文包）"; fi
+			;;
 		geox) pcop_label="GeoX 数据库" ;;
 		zashboard) pcop_label="Zashboard 完整版（dist.zip / full）" ;;
 		ruleset) pcop_label="YAML rule-set 自定义规则集" ;;
@@ -3189,6 +3275,7 @@ run_component_only_workflow() {
 	DOWNLOAD_FAILURES=0
 	reset_workflow_state
 	set_component_only_default_statuses
+	if pkg_is_installed nikki; then NIKKI_FIRST_INSTALL=0; else NIKKI_FIRST_INSTALL=1; fi
 	print_component_only_plan
 	case "$COMPONENT_ONLY_KIND" in
 			nikki)
@@ -3197,6 +3284,7 @@ run_component_only_workflow() {
 			select_downloader
 			if ! preserve_nondefault_core_before_nikki; then
 				NIKKI_UPDATE_STATUS="skipped"
+				set_nikki_package_result_statuses "$(nikki_package_update_plan)" skipped
 				err "无法保全当前非默认内核，已取消 Nikki 单项维护"
 				print_summary
 				return 0
@@ -3206,6 +3294,7 @@ run_component_only_workflow() {
 				else NIKKI_UPDATE_STATUS="components_updated"; fi
 			else
 				NIKKI_UPDATE_STATUS="skipped"
+				set_nikki_package_result_statuses "$(nikki_package_update_plan)" skipped
 				warn "Nikki 单项维护失败，已执行安装阶段回滚并保留原状态"
 				print_summary
 				return 0
@@ -3303,18 +3392,21 @@ run_update_workflow() {
 			MODEL_MAINTAIN=0
 		fi
 	fi
+	if pkg_is_installed nikki; then NIKKI_FIRST_INSTALL=0; else NIKKI_FIRST_INSTALL=1; fi
 	print_execution_plan
 	flow_title "步骤 1/6：Nikki 插件主体及依赖"
 	if [ "$NIKKI_UPDATE_CHOICE" = update ]; then
 		select_downloader
 		if ! preserve_nondefault_core_before_nikki; then
 			NIKKI_UPDATE_STATUS="skipped"
+			set_nikki_package_result_statuses "$(nikki_package_update_plan)" skipped
 			err "无法保全当前非默认内核，为避免 Nikki 更新后无法恢复，已取消本轮主体更新"
 			print_summary
 			return 2
 		fi
 		if ! install_or_update_nikki; then
 			NIKKI_UPDATE_STATUS="skipped"
+			set_nikki_package_result_statuses "$(nikki_package_update_plan)" skipped
 			warn "Nikki 安装/更新失败，已执行回滚；请检查网络后从主菜单重试"
 			print_summary
 			return 2
@@ -3328,6 +3420,7 @@ run_update_workflow() {
 		fi
 	else
 		NIKKI_UPDATE_STATUS="$(status_from_auto_skip "$AUTO_SKIP_NIKKI")"
+		set_nikki_package_result_statuses "" "$NIKKI_UPDATE_STATUS"
 		progress_auto_skip "Nikki" "$AUTO_SKIP_NIKKI" "已按选择跳过 Nikki 及其依赖更新，当前安装保持不变"
 	fi
 	case "$ACTION" in smart|alpha|stable|skip) ;; *) fatal "维护计划缺少有效内核动作" ;; esac
