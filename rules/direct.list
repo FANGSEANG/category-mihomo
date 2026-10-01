@@ -74,17 +74,28 @@ DOMAIN-SUFFIX,crossref.org
 DOMAIN-REGEX,^dl-[A-Za-z0-9-]+\.mypikpak\.com$
 
 #################### 杂项
-DOMAIN-SUFFIX,steelseries.com # 赛睿官网，可以直连访问获取最新的驱动程序和固件更新
-DOMAIN,api.ipify.org # ip查询
-DOMAIN,bam.nr-data.net # NewRelic数据上报，很多程序都包含了此功能用于开发者追踪错误，频繁上报者会使用很多流量故强制直连
-DOMAIN-SUFFIX,sentry.io # sentry错误上报程序，很多程序都包含了此功能用于开发者追踪错误，频繁上报者会使用很多流量故强制直连
-DOMAIN-SUFFIX,qing-yu.top # CDN
-DOMAIN-SUFFIX,cd120.info # 华医通使用的域名后缀，Fakeip可能导致登录失败的问题
-DOMAIN,mqtt.xbase.cloud # HASS.Agent客户端使用的MQTT服务器
-DOMAIN-SUFFIX,duoqin.com # 多亲域名，用于多亲系列手机守护软件
-DOMAIN-SUFFIX,tmspk.net # teamspeak语音聊天
-DOMAIN-SUFFIX,teamspeak.com # teamspeak语音聊天
-DOMAIN-SUFFIX,myteamspeak.com # teamspeak服务器列表
+# 赛睿官网，可以直连访问获取最新的驱动程序和固件更新
+DOMAIN-SUFFIX,steelseries.com
+# ip查询
+DOMAIN,api.ipify.org
+# NewRelic数据上报，很多程序都包含了此功能用于开发者追踪错误，频繁上报者会使用很多流量故强制直连
+DOMAIN,bam.nr-data.net
+# sentry错误上报程序，很多程序都包含了此功能用于开发者追踪错误，频繁上报者会使用很多流量故强制直连
+DOMAIN-SUFFIX,sentry.io
+# CDN
+DOMAIN-SUFFIX,qing-yu.top
+# 华医通使用的域名后缀，Fakeip可能导致登录失败的问题
+DOMAIN-SUFFIX,cd120.info
+# HASS.Agent客户端使用的MQTT服务器
+DOMAIN,mqtt.xbase.cloud
+# 多亲域名，用于多亲系列手机守护软件
+DOMAIN-SUFFIX,duoqin.com
+# teamspeak语音聊天
+DOMAIN-SUFFIX,tmspk.net
+# teamspeak语音聊天
+DOMAIN-SUFFIX,teamspeak.com
+# teamspeak服务器列表
+DOMAIN-SUFFIX,myteamspeak.com
 
 # 其他分类
 DOMAIN-SUFFIX,cn.bing.com
@@ -315,7 +326,8 @@ DOMAIN-SUFFIX,adobe.com
 DOMAIN-SUFFIX,easytier.top
 
 # 下载类
-DOMAIN,router.bittorrent.com # tracker
+# tracker
+DOMAIN,router.bittorrent.com
 
 # 馒头
 DOMAIN-KEYWORD,m-team
@@ -372,7 +384,7 @@ DOMAIN-SUFFIX,p01.epsonconnect.com
 DOMAIN-SUFFIX,sapphiretech.com
 # dnshe免费域名 / add by Telegram user: r / Date: 2026-01-14 17:48:56
 DOMAIN-SUFFIX,dnshe.com
-# add by Telegram user:  / Date: 2026-03-10 00:12:14
+# add by Telegram user:  / Date: 2026-03-10 00:12:14
 DOMAIN-SUFFIX,xfltd.org
 # add by Telegram user: Aethersailor / Date: 2026-03-05 10:48:07
 DOMAIN-SUFFIX,00333118.com
@@ -386,9 +398,9 @@ DOMAIN-SUFFIX,alonginwind.eu.org
 DOMAIN-SUFFIX,iosgujian.com
 # 复利笔记小程序 / add by Telegram user: 🥝🥝🥝混个脸熟 / Date: 2026-03-31 00:28:03
 DOMAIN-SUFFIX,fuyinkeji.top
-# add by Telegram user:  / Date: 2026-03-10 00:15:38
+# add by Telegram user:  / Date: 2026-03-10 00:15:38
 DOMAIN-SUFFIX,0734cn.top
-# add by Telegram user:  / Date: 2026-03-10 00:15:44
+# add by Telegram user:  / Date: 2026-03-10 00:15:44
 DOMAIN-SUFFIX,hutaoyun.top
 # 先锋学霸 / add by Telegram user: Mairs / Date: 2026-01-22 17:46:58
 DOMAIN-SUFFIX,axuex.top
@@ -438,8 +450,6 @@ DOMAIN-SUFFIX,vbkr.com
 DOMAIN-SUFFIX,jsj.top
 # https://github.com/Aethersailor/Custom_OpenClash_Rules/issues/416
 DOMAIN-SUFFIX,cqjypg.com
-# add by Telegram user: 嘿嘿 / Date: 2026-04-11 08:08:32
-DOMAIN-SUFFIX,jsj.top
 # add by Telegram user: Evan / Date: 2026-07-05 10:09:41
 DOMAIN-SUFFIX,yunqin.online
 # 操作系统网站 / add by Telegram user: young / Date: 2026-06-02 18:02:31
