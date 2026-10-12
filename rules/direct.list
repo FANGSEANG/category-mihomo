@@ -164,7 +164,13 @@ DOMAIN-SUFFIX,hub.gitmirror.com
 DOMAIN-SUFFIX,jsdelivr.com
 DOMAIN-SUFFIX,jsdelivr.net
 DOMAIN-SUFFIX,kgithub.com
-
+DOMAIN-SUFFIX,gh.dpik.top
+DOMAIN-SUFFIX,gh.felicity.ac.cn
+DOMAIN-SUFFIX,gh.b52m.cn
+DOMAIN-SUFFIX,github-proxy.memory-echoes.cn
+DOMAIN-SUFFIX,gh.jasonzeng.dev
+DOMAIN-SUFFIX,github.dpik.top
+DOMAIN-SUFFIX,ghproxy.net
 
 # Docker 反代 CDN
 DOMAIN-SUFFIX,docker.1panel.live
