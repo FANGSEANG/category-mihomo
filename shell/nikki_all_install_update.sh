@@ -23,7 +23,7 @@
 
 set -u
 
-SCRIPT_VERSION="3.7.0-opt8"
+SCRIPT_VERSION="3.7.0-opt9"
 ACTION=""; CLI_ACTION=""; MAIN_CHOICE=""; WORKFLOW_MODE="命令行维护"
 ENVIRONMENT_READY=0; PKG_INDEX_READY=0; NIKKI_FEED_READY=0; NIKKI_FEED_ATTEMPTED=0; STATUS_SCAN_READY=0
 NIKKI_FEED_ORIGINAL_ANY=0; NIKKI_FEED_ADDED_SESSION=0; NIKKI_FEED_EXIT_PROMPTED=0
@@ -60,7 +60,7 @@ TRANSACTION_ACTIVE=0; WAS_RUNNING=0; MAINT_SUCCESS=0
 NIKKI_UPDATE_STATUS=not_selected; CORE_UPDATE_STATUS=not_selected; MODEL_UPDATE_STATUS=not_selected
 GEOX_UPDATE_STATUS=not_selected; ZASH_UPDATE_STATUS=not_selected
 RULESET_UPDATE_STATUS=not_selected; RULESET_UPDATED_COUNT=0; RULESET_TOTAL_COUNT=0
-UNINSTALL_REMOVE_FEED=0; TTY_RAW_ACTIVE=0; TTY_STTY_STATE=""; DOWNLOADER=""
+UNINSTALL_REMOVE_FEED=0; UNINSTALL_RESET_CHOICE=""; TTY_RAW_ACTIVE=0; TTY_STTY_STATE=""; DOWNLOADER=""
 PKG_MANAGER=unknown; FIREWALL=unknown; KERNEL_VERSION=unknown
 FIRMWARE_NAME=OpenWrt; FIRMWARE_DESCRIPTION="OpenWrt unknown"; FIRMWARE_DISPLAY="OpenWrt unknown"
 OPENWRT_VERSION=unknown; OPENWRT_ARCH=unknown; LUCI_BRANCH=""; LUCI_REVISION=""; LUCI_OPENWRT_SERIES=""
@@ -133,12 +133,10 @@ session_feed_cleanup() {
 		case "$sf_answer" in
 			YES|yes|Yes|Y|y|是) key_info "已选择保留 Nikki 官方软件源和签名密钥"; return 0 ;;
 			NO|no|No|N|n|否)
-				sf_file="$(feed_source_file 2>/dev/null || true)"
-				if [ -n "$sf_file" ] && [ -f "$sf_file" ]; then
-					case "$PKG_MANAGER" in
-						opkg) sed -i '/^[[:space:]]*src\/gz[[:space:]][[:space:]]*nikki[[:space:]]/d' "$sf_file" 2>/dev/null || true ;;
-						apk) sed -i '/\/nikki\/packages\.adb[[:space:]]*$/d' "$sf_file" 2>/dev/null || true ;;
-					esac
+				sf_backup="$WORK_DIR/feed-exit-backup"
+				if ! remove_official_nikki_feed_entries "$sf_backup"; then
+					warn "Nikki 软件源精确删除或复核失败，已保留软件源与签名密钥"
+					return 0
 				fi
 				if [ "$PKG_MANAGER" = apk ]; then
 					rm -f -- "$NIKKI_APK_KEY" 2>/dev/null || true
@@ -2839,7 +2837,7 @@ main_menu() {
 		menu_line "  1）自动维护｜选择预设方案，一键执行"
 		menu_line "  2）手动维护｜自由多选组件与版本，统一执行"
 		menu_line "  3）备份与恢复｜仅处理 Nikki 插件设置"
-		menu_line "  4）卸载重置｜删除 Nikki 与运行数据，可选是否删除官方源"
+		menu_line "  4）卸载重置｜完整卸载，或仅删除 Nikki 官方软件源"
 		menu_line "  5）退出脚本"
 		if [ "$DETAIL_OUTPUT" = 1 ]; then say "${B}${Y}日志模式：详细流程（可重新执行脚本时去掉 --verbose 恢复简洁输出）${N}"; else say "${B}${Y}日志模式：关键步骤（需要完整过程时使用 --verbose）${N}"; fi
 		menu_line "================================================"
@@ -2851,6 +2849,26 @@ main_menu() {
 			3) MAIN_CHOICE="backup"; return 0 ;;
 			4) MAIN_CHOICE="uninstall"; return 0 ;;
 			5) MAIN_CHOICE="exit"; return 0 ;;
+			*) warn "无效选项，请重新输入" ;;
+		esac
+	done
+}
+
+uninstall_reset_menu() {
+	while :; do
+		say ""
+		menu_line "================ 卸载与重置 ================"
+		menu_line "  1）完整卸载 Nikki｜删除软件、配置、运行数据和内核，可选是否删除源与密钥"
+		menu_line "  2）仅删除 Nikki 官方软件源｜OpenWrt 版本升级前清理 Repository not allowed 报错"
+		say "${B}${Y}     保留软件、配置、运行数据、内核和签名密钥；已安装 Nikki 可继续运行，但不再通过包管理器更新。${N}"
+		menu_line "  3）返回主菜单"
+		menu_line "============================================"
+		prompt '>>> 请手动选择 [1-3]：'
+		read_user_input || fatal "无法读取卸载与重置菜单选项"
+		case "$USER_INPUT" in
+			1) UNINSTALL_RESET_CHOICE=uninstall; return 0 ;;
+			2) UNINSTALL_RESET_CHOICE=feed-only; return 0 ;;
+			3) UNINSTALL_RESET_CHOICE="return"; return 0 ;;
 			*) warn "无效选项，请重新输入" ;;
 		esac
 	done
@@ -2910,6 +2928,8 @@ post_action_menu() {
 		say ""
 		if [ "$pam_context" = "uninstall" ]; then
 			menu_line "================ 卸载完成 ================"
+		elif [ "$pam_context" = "feed-only" ]; then
+			menu_line "================ 软件源清理完成 ================"
 		else
 			menu_line "================ 本轮维护完成 ================"
 		fi
@@ -2973,6 +2993,149 @@ choose_uninstall_feed_policy() {
 	done
 }
 
+official_nikki_feed_count() {
+	onfc_file="$1"
+	[ -f "$onfc_file" ] || { printf '%s\n' 0; return 0; }
+	case "$PKG_MANAGER" in
+		apk)
+			awk '$0 ~ /^[[:space:]]*https:\/\/nikkinikki[.]pages[.]dev\/[^\/[:space:]]+\/[^\/[:space:]]+\/nikki\/packages[.]adb[[:space:]]*$/ { n++ } END { print n + 0 }' "$onfc_file"
+			;;
+		opkg)
+			awk '$0 ~ /^[[:space:]]*src\/gz[[:space:]]+nikki[[:space:]]+https:\/\/nikkinikki[.]pages[.]dev\/[^\/[:space:]]+\/[^\/[:space:]]+\/nikki[[:space:]]*$/ { n++ } END { print n + 0 }' "$onfc_file"
+			;;
+		*) printf '%s\n' 0 ;;
+	esac
+}
+
+write_feed_without_official_nikki() {
+	wfwon_source="$1"; wfwon_target="$2"
+	case "$PKG_MANAGER" in
+		apk)
+			awk '$0 ~ /^[[:space:]]*https:\/\/nikkinikki[.]pages[.]dev\/[^\/[:space:]]+\/[^\/[:space:]]+\/nikki\/packages[.]adb[[:space:]]*$/ { next } { print }' "$wfwon_source" > "$wfwon_target"
+			;;
+		opkg)
+			awk '$0 ~ /^[[:space:]]*src\/gz[[:space:]]+nikki[[:space:]]+https:\/\/nikkinikki[.]pages[.]dev\/[^\/[:space:]]+\/[^\/[:space:]]+\/nikki[[:space:]]*$/ { next } { print }' "$wfwon_source" > "$wfwon_target"
+			;;
+		*) return 1 ;;
+	esac
+}
+
+remove_official_nikki_feed_entries() {
+	ronfe_backup="$1"; NIKKI_FEED_REMOVED_COUNT=0
+	ronfe_file="$(feed_source_file 2>/dev/null || true)"
+	[ -n "$ronfe_file" ] || { warn "无法确定当前系统的软件源文件"; return 1; }
+	[ -e "$ronfe_file" ] || { info "软件源文件不存在，无需删除 Nikki 源"; return 0; }
+	[ ! -L "$ronfe_file" ] || { warn "软件源文件是符号链接，为避免越界修改已拒绝删除"; return 1; }
+	ronfe_count="$(official_nikki_feed_count "$ronfe_file")"
+	case "$ronfe_count" in ''|*[!0-9]*) warn "无法统计 Nikki 官方软件源条目"; return 1 ;; esac
+	[ "$ronfe_count" -gt 0 ] || { info "未发现规范格式的 Nikki 官方软件源条目，无需修改"; return 0; }
+	mkdir -p "$ronfe_backup" || return 1
+	case "$PKG_MANAGER" in opkg) ronfe_name=customfeeds.conf ;; apk) ronfe_name=customfeeds.list ;; *) return 1 ;; esac
+	ronfe_saved="$ronfe_backup/$ronfe_name"
+	[ -f "$ronfe_saved" ] || cp -p "$ronfe_file" "$ronfe_saved" || return 1
+	ronfe_expected="$ronfe_backup/${ronfe_name}.expected"
+	write_feed_without_official_nikki "$ronfe_file" "$ronfe_expected" || return 1
+	ronfe_new="${ronfe_file}.nikki-remove.$$"
+	[ ! -e "$ronfe_new" ] || { warn "临时文件已存在：$ronfe_new"; return 1; }
+	cp -p "$ronfe_file" "$ronfe_new" || return 1
+	# 覆写已复制的临时文件以保留原文件权限；正式替换前必须与安全过滤结果逐字节一致。
+	if ! cat "$ronfe_expected" > "$ronfe_new"; then rm -f -- "$ronfe_new"; return 1; fi
+	if ! cmp -s "$ronfe_new" "$ronfe_expected"; then
+		rm -f -- "$ronfe_new"
+		warn "精确删除结果与安全过滤结果不一致，已取消修改"
+		return 1
+	fi
+	mv -f -- "$ronfe_new" "$ronfe_file" || { rm -f -- "$ronfe_new"; return 1; }
+	if [ "$(official_nikki_feed_count "$ronfe_file")" -ne 0 ] || ! cmp -s "$ronfe_file" "$ronfe_expected"; then
+		cp -p "$ronfe_saved" "$ronfe_file" 2>/dev/null || true
+		warn "删除后复核失败，已恢复原软件源文件"
+		return 1
+	fi
+	NIKKI_FEED_REMOVED_COUNT="$ronfe_count"
+	return 0
+}
+
+restore_official_nikki_feed_file() {
+	ronff_backup="$1"; ronff_file="$(feed_source_file 2>/dev/null || true)"
+	case "$PKG_MANAGER" in opkg) ronff_name=customfeeds.conf ;; apk) ronff_name=customfeeds.list ;; *) return 1 ;; esac
+	[ -n "$ronff_file" ] && [ -f "$ronff_backup/$ronff_name" ] || return 1
+	cp -p "$ronff_backup/$ronff_name" "$ronff_file"
+}
+
+snapshot_nikki_runtime_identity() {
+	snri_target="$1"
+	: > "$snri_target" || return 1
+	for snri_pkg in nikki luci-app-nikki luci-i18n-nikki-zh-cn; do
+		snri_version="$(nikki_package_version "$snri_pkg" 2>/dev/null || true)"
+		printf '%s=%s\n' "$snri_pkg" "${snri_version:-未安装}" >> "$snri_target" || return 1
+	done
+	snri_core="$(core_installed_version 2>/dev/null || true)"
+	printf 'mihomo=%s\n' "${snri_core:-未安装}" >> "$snri_target"
+}
+
+confirm_remove_nikki_feed_only() {
+	[ "$ASSUME_YES" -eq 1 ] && return 0
+	while :; do
+		say "${B}${Y}此操作只删除 Nikki 官方软件源条目，不卸载软件，不删除配置、内核或签名密钥。${N}"
+		menu_line "  YES / yes / Y / y / 是）确认仅删除软件源"
+		menu_line "  0）取消并返回主菜单"
+		prompt '>>> 请确认 [YES/0]：'
+		read_user_input || fatal "无法读取软件源删除确认"
+		crnfo_answer="$(normalize_menu_answer "$USER_INPUT")"
+		case "$crnfo_answer" in
+			YES|yes|Yes|Y|y|是) return 0 ;;
+			0) return 1 ;;
+			*) warn "请输入 YES 确认，或输入 0 取消" ;;
+		esac
+	done
+}
+
+remove_nikki_feed_only() {
+	confirm_remove_nikki_feed_only || { warn "已取消删除软件源"; return 2; }
+	rnfo_backup="$(mktemp -d "$WORK_DIR/feed-only.XXXXXX")" || { warn "无法创建软件源安全备份目录"; return 1; }
+	snapshot_nikki_runtime_identity "$rnfo_backup/runtime.before" || { safe_rm_tree "$rnfo_backup" >/dev/null 2>&1 || true; return 1; }
+	if [ -e "$NIKKI_APK_KEY" ]; then rnfo_key_before=1; else rnfo_key_before=0; fi
+	if ! remove_official_nikki_feed_entries "$rnfo_backup"; then
+		restore_official_nikki_feed_file "$rnfo_backup" >/dev/null 2>&1 || true
+		safe_rm_tree "$rnfo_backup" >/dev/null 2>&1 || true
+		warn "Nikki 软件源删除失败，已恢复原软件源文件"
+		return 1
+	fi
+	if [ "$NIKKI_FEED_REMOVED_COUNT" -eq 0 ]; then
+		progress_skip "未发现规范格式的 Nikki 官方软件源，系统未发生变更"
+		safe_rm_tree "$rnfo_backup" >/dev/null 2>&1 || true
+		return 0
+	fi
+	snapshot_nikki_runtime_identity "$rnfo_backup/runtime.after" || true
+	if ! cmp -s "$rnfo_backup/runtime.before" "$rnfo_backup/runtime.after"; then
+		restore_official_nikki_feed_file "$rnfo_backup" >/dev/null 2>&1 || true
+		safe_rm_tree "$rnfo_backup" >/dev/null 2>&1 || true
+		warn "删除后检测到 Nikki 软件或内核状态变化，已恢复原软件源文件"
+		return 1
+	fi
+	if { [ "$rnfo_key_before" -eq 1 ] && [ ! -e "$NIKKI_APK_KEY" ]; } || { [ "$rnfo_key_before" -eq 0 ] && [ -e "$NIKKI_APK_KEY" ]; }; then
+		restore_official_nikki_feed_file "$rnfo_backup" >/dev/null 2>&1 || true
+		safe_rm_tree "$rnfo_backup" >/dev/null 2>&1 || true
+		warn "删除后检测到 APK 签名密钥状态变化，已恢复原软件源文件"
+		return 1
+	fi
+	invalidate_package_session_cache
+	if ! pkg_update_once; then
+		restore_official_nikki_feed_file "$rnfo_backup" >/dev/null 2>&1 || true
+		invalidate_package_session_cache
+		pkg_update_once >/dev/null 2>&1 || true
+		safe_rm_tree "$rnfo_backup" >/dev/null 2>&1 || true
+		warn "删除后剩余 OpenWrt 软件源刷新失败，无法确认系统包管理正常；已恢复 Nikki 软件源"
+		return 1
+	fi
+	reset_nikki_feed_session
+	PKG_INDEX_READY=1
+	ok "已精确删除 ${NIKKI_FEED_REMOVED_COUNT} 条 Nikki 官方软件源；其他源、已安装软件、配置、内核和签名密钥均保持不变"
+	ok "剩余 OpenWrt 软件源索引刷新成功，未发现误删或包管理器异常"
+	safe_rm_tree "$rnfo_backup" >/dev/null 2>&1 || true
+	return 0
+}
+
 remove_nikki_feed_and_key() {
 	rnfk_backup="$1"
 	case "$PKG_MANAGER" in
@@ -2992,19 +3155,15 @@ remove_nikki_feed_and_key() {
 			done
 			[ -s "$rnfk_key" ] || { warn "Nikki OPKG 公钥下载失败，未删除软件源"; return 1; }
 			opkg-key remove "$rnfk_key" >/dev/null 2>&1 || { warn "Nikki OPKG 签名密钥删除失败，未删除软件源"; return 1; }
-			if grep -q nikki /etc/opkg/customfeeds.conf 2>/dev/null; then
-				sed -i '/nikki/d' /etc/opkg/customfeeds.conf || return 1
-			fi
 			;;
 		apk)
-			if grep -q nikki /etc/apk/repositories.d/customfeeds.list 2>/dev/null; then
-				sed -i '/nikki/d' /etc/apk/repositories.d/customfeeds.list || return 1
-			fi
 			rm -f "$NIKKI_APK_KEY" || return 1
 			;;
 		*) return 1 ;;
 	esac
-	if feed_present; then warn "Nikki 软件源条目删除后仍存在"; return 1; fi
+	remove_official_nikki_feed_entries "$rnfk_backup" || return 1
+	rnfk_file="$(feed_source_file 2>/dev/null || true)"
+	if [ -n "$rnfk_file" ] && [ "$(official_nikki_feed_count "$rnfk_file")" -ne 0 ]; then warn "Nikki 软件源条目删除后仍存在"; return 1; fi
 	if [ "$PKG_MANAGER" = apk ] && [ -e "$NIKKI_APK_KEY" ]; then warn "Nikki APK 签名密钥删除后仍存在"; return 1; fi
 	return 0
 }
@@ -3431,7 +3590,7 @@ run_update_workflow() {
 }
 
 reset_menu_plan() {
-	ACTION=""; MAIN_CHOICE=""; AUTO_CHOICE=""; MANUAL_BATCH_CHOICE=""
+	ACTION=""; MAIN_CHOICE=""; AUTO_CHOICE=""; MANUAL_BATCH_CHOICE=""; UNINSTALL_RESET_CHOICE=""
 	NIKKI_UPDATE_CHOICE=update; LGBM_CHOICE=auto; LGBM_SET=0; MODEL_MAINTAIN=0
 	GEOX_CHOICE=update; ZASH_CHOICE=update; ZASH_ASSET=dist.zip; ZASH_VARIANT_LABEL=full
 	RULESET_CHOICE=skip
@@ -3473,8 +3632,18 @@ main() {
 			continue
 		fi
 		if [ "$MAIN_CHOICE" = uninstall ]; then
-			if ! uninstall_nikki; then warn "卸载未执行，返回主菜单"; continue; fi
-			if post_action_menu uninstall; then continue; else exit 0; fi
+			uninstall_reset_menu
+			case "$UNINSTALL_RESET_CHOICE" in
+				return) continue ;;
+				uninstall)
+					if ! uninstall_nikki; then warn "卸载未执行，返回主菜单"; continue; fi
+					if post_action_menu uninstall; then continue; else exit 0; fi
+					;;
+				feed-only)
+					if ! remove_nikki_feed_only; then warn "软件源未删除，返回主菜单"; continue; fi
+					if post_action_menu feed-only; then continue; else exit 0; fi
+					;;
+			esac
 		fi
 
 		if [ "$MAIN_CHOICE" = auto ]; then
