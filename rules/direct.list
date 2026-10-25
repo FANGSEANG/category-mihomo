@@ -58,10 +58,19 @@ DOMAIN-SUFFIX,unicomtest.cn
 # NTP时间校准服务
 DST-PORT,123
 
+# 银行 / 金融 / 支付：避免代理出口触发风控
 # 泰国开泰银行，如果走代理，会被风控
 DOMAIN-SUFFIX,kasikornbank.com
 # 香港渣打银行
 DOMAIN-SUFFIX,sc.com
+
+DOMAIN-SUFFIX,hsbc.com
+DOMAIN-SUFFIX,citibank.com
+DOMAIN-SUFFIX,citi.com
+DOMAIN-SUFFIX,visa.com
+DOMAIN-SUFFIX,mastercard.com
+DOMAIN-SUFFIX,boc.com.hk
+DOMAIN-SUFFIX,boc.hk
 
 # SSRDOG新域名
 #DOMAIN-SUFFIX,xf9pzeslxw.sbs
