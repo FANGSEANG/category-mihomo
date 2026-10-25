@@ -20,6 +20,9 @@ DOMAIN-SUFFIX,tailscale.com
 IP-CIDR,100.64.0.0/10,no-resolve
 IP-CIDR,fd7a:115c:a1e0::/48,no-resolve
 
+# Tailscale STUN / NAT 类型探测
+AND,((NETWORK,UDP),(DST-PORT,3478))
+
 # 常用端口（仅UDP）
 AND,((NETWORK,UDP),(DST-PORT,41641))
 AND,((NETWORK,UDP),(SRC-PORT,41641))
