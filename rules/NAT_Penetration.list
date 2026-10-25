@@ -1,65 +1,95 @@
-# NAT Penetration内网穿透相关
+# =========================================================
+# NAT Penetration / 内网穿透与点对点连接
+#
+# Mihomo Rule Provider：
+#   behavior: classical
+#   format: text
+#
+# 主配置引用：
+#   - RULE-SET,NAT_Pass,DIRECT
+#
+# 注意：
+# 1. PROCESS-NAME 只能识别 Mihomo 所在设备上的本地进程，
+#    无法识别二级路由或其他局域网设备中的进程。
+# 2. 端口规则会匹配所有设备和应用，不受注释分组限制。
 
 #-------------------------
 # Tailscale相关
 #-------------------------
 
-# 进程
+# 进程：仅当 tailscaled 与 Mihomo 运行在同一设备时有效
 PROCESS-NAME,tailscaled
 
 # DERP Servers中继服务器，如果启用DOMAIN-SUFFIX,tailscale.com，下面两个可以不开
 #DOMAIN-REGEX,^derp\d*-?.*\.tailscale\.com$
 #DOMAIN-REGEX,^derp.*tailscale\.com
 
-# 其他域名
+# Tailscale 控制服务、DERP 和 MagicDNS 域名
+DOMAIN-SUFFIX,tailscale.com
 DOMAIN-SUFFIX,tailscale.io
 DOMAIN-SUFFIX,ts.net
-DOMAIN-SUFFIX,tailscale.com
 
-# IP绕过
+# Tailscale 地址空间
+# 注意：100.64.0.0/10 同时属于 RFC 6598 共享地址空间，
+# 部分运营商的 CGNAT 也可能使用该范围。
 IP-CIDR,100.64.0.0/10,no-resolve
-IP-CIDR,fd7a:115c:a1e0::/48,no-resolve
+IP-CIDR6,fd7a:115c:a1e0::/48,no-resolve
 
-# Tailscale STUN / NAT 类型探测
+# Tailscale 使用 UDP 3478 进行 STUN / NAT 类型探测
+# 此规则会匹配所有应用的 UDP 3478，不仅限于 Tailscale。
 AND,((NETWORK,UDP),(DST-PORT,3478))
 
-# 常用端口（仅UDP）
+# Tailscale 默认 WireGuard UDP 端口
+# 如果修改过 tailscaled --port，需要同步修改。
 AND,((NETWORK,UDP),(DST-PORT,41641))
 AND,((NETWORK,UDP),(SRC-PORT,41641))
 
-# peer relays端口（仅UDP）
+# Tailscale Peer Relay
+# 本环境已将 Peer Relay 端口配置为 UDP 40000。
 AND,((NETWORK,UDP),(DST-PORT,40000))
 AND,((NETWORK,UDP),(SRC-PORT,40000))
 
-#-------------------------
-# Zerotier相关
-#-------------------------
 
-# Domain
-#DOMAIN-SUFFIX,cdn77.com
-DOMAIN,planet.zerotier.com
+# =========================================================
+# ZeroTier
+# =========================================================
 
-# 端口（仅UDP）
+# 仅当 zerotier-one 与 Mihomo 运行在同一设备时有效
+PROCESS-NAME,zerotier-one
+
+# ZeroTier 控制器、根服务器及相关服务
+DOMAIN-SUFFIX,zerotier.com
+
+# ZeroTier 默认及最低通信端口
+# ZeroTier P2P 连接还可能使用随机 UDP 端口，
+# 仅放行 9993 不能保证所有场景都能建立直接连接。
 AND,((NETWORK,UDP),(DST-PORT,9993))
 AND,((NETWORK,UDP),(SRC-PORT,9993))
 
-#-------------------------
+
+# =========================================================
 # Cloudflare Tunnel
-#-------------------------
-#DOMAIN-SUFFIX,argotunnel.com
-#DOMAIN-SUFFIX,cftunnel.com
-#IP-CIDR,198.41.192.0/24,no-resolve
-#IP-CIDR,198.41.200.0/24,no-resolve
-#DST-PORT,7844
-#最新写法
+# =========================================================
+
+# Cloudflare Tunnel 服务域名
 DOMAIN-SUFFIX,argotunnel.com
 DOMAIN-SUFFIX,cftunnel.com
-AND,((IP-CIDR,198.41.192.0/24),(DST-PORT,7844))
-AND,((IP-CIDR,198.41.200.0/24),(DST-PORT,7844))
 
-#-------------------------
-# 适合直连的Stun 域名
-#-------------------------
+# 默认区域 IPv4
+# TCP 7844：HTTP/2
+# UDP 7844：QUIC
+AND,((IP-CIDR,198.41.192.0/24,no-resolve),(DST-PORT,7844))
+AND,((IP-CIDR,198.41.200.0/24,no-resolve),(DST-PORT,7844))
+
+# 默认区域 IPv6
+# /123 覆盖 ::0 至 ::1f，包含官方列出的 ::1 至 ::10
+AND,((IP-CIDR6,2606:4700:a0::/123,no-resolve),(DST-PORT,7844))
+AND,((IP-CIDR6,2606:4700:a8::/123,no-resolve),(DST-PORT,7844))
+
+# =========================================================
+# 明确允许直连的 STUN / 防火墙穿透服务
+# =========================================================
+
 DOMAIN,stun.isp.net.au
 DOMAIN,fwa.lifesizecloud.com
 DOMAIN,stun.freeswitch.org
@@ -67,12 +97,14 @@ DOMAIN,stun.voip.blackberry.com
 DOMAIN,stun.nextcloud.com
 DOMAIN,stun.radiojar.com
 DOMAIN,stun.sonetel.com
-DOMAIN,stun.syncthing.net
 DOMAIN,stun.hot-chilli.net
 DOMAIN,stun.fitauto.ru
 
-#-------------------------
-# 其他
-#-------------------------
+# 当前解析到 192.0.2.42（TEST-NET 文档测试地址），疑似已经停用。
+# DOMAIN,stun.syncthing.net
+
+# =========================================================
+# 预留：其他 NAT 穿透规则
+# =========================================================
 
 
