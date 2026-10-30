@@ -156,6 +156,8 @@ static.adtidy.org
 
 # 工业 / 中国站点
 +.cn.element14.com
++.abb.com.cn
++.mouser.cn
 
 # STUN 国内
 +.stun.*.cn
