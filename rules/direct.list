@@ -129,6 +129,7 @@ DOMAIN-SUFFIX,amd.com
 DOMAIN-SUFFIX,rls.si
 DOMAIN-SUFFIX,ulfatech.com
 DOMAIN-SUFFIX,phoenixcontact.com
+DOMAIN-SUFFIX,mouser.cn
 
 #-----以下额外补充------#
 # Generated from rule/Custom_Direct.list
