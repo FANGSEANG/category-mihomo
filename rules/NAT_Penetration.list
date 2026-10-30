@@ -37,7 +37,7 @@ IP-CIDR6,fd7a:115c:a1e0::/48,no-resolve
 
 # Tailscale 使用 UDP 3478 进行 STUN / NAT 类型探测
 # 此规则会匹配所有应用的 UDP 3478，不仅限于 Tailscale。
-AND,((NETWORK,UDP),(DST-PORT,3478))
+#AND,((NETWORK,UDP),(DST-PORT,3478))
 
 # Tailscale 默认 WireGuard UDP 端口
 # 如果修改过 tailscaled --port，需要同步修改。
