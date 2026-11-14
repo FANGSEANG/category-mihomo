@@ -63,6 +63,8 @@ DST-PORT,123
 DOMAIN-SUFFIX,kasikornbank.com
 # 香港渣打银行
 DOMAIN-SUFFIX,sc.com
+# 农行
+DOMAIN-SUFFIX,fintechabchina.com
 
 DOMAIN-SUFFIX,hsbc.com
 DOMAIN-SUFFIX,citibank.com
