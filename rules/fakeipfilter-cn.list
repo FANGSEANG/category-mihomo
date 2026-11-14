@@ -56,6 +56,7 @@ enrichgw.10010.com
 app.yinxiang.com
 +.cmbchina.com
 +.cmbimg.com
++.fintechabchina.com
 
 # 境外银行 / 金融 / 支付（业务流量必须 DIRECT，DNS 使用国内直连 DoH）
 +.kasikornbank.com
