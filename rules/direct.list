@@ -53,8 +53,8 @@ DOMAIN-SUFFIX,telecomtest.cn
 DOMAIN-SUFFIX,unicomtest.cn
 
 # 谷歌商店下载
-DOMAIN-SUFFIX,googleapis.cn
-DOMAIN-SUFFIX,xn--ngstr-lra8j.com
+#DOMAIN-SUFFIX,googleapis.cn
+#DOMAIN-SUFFIX,xn--ngstr-lra8j.com
 
 # NTP时间校准服务
 DST-PORT,123
