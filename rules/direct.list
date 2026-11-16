@@ -52,8 +52,9 @@ DOMAIN-SUFFIX,ctyun.cn
 DOMAIN-SUFFIX,telecomtest.cn
 DOMAIN-SUFFIX,unicomtest.cn
 
-# 苹果推送服务
-#DST-PORT,5223 #会强制苹果推送直连，暂时注释掉
+# 谷歌商店下载
+DOMAIN-SUFFIX,googleapis.cn
+DOMAIN-SUFFIX,xn--ngstr-lra8j.com
 
 # NTP时间校准服务
 DST-PORT,123
